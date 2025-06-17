@@ -5,6 +5,8 @@ pe_firms.json
 uploads/
 reports/
 requirements.txt
+.ideas
+
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
