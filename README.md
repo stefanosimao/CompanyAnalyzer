@@ -1,1 +1,1 @@
-# company-analisys
+# Company Analyser
