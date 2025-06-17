@@ -3,6 +3,7 @@ import logging
 from flask import Flask
 from . import config
 from . import utils
+from .routes import main_bp 
 
 # Configure logging for the application
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -30,11 +31,7 @@ def create_app():
     # Initialize default PE firms list if it doesn't exist
     utils.load_pe_firms()
     
-    # --- Register Blueprints Here ---
-    # We will define and import our blueprints (routes) in a later step
-    # Example:
-    # from .routes import main_bp
-    # app.register_blueprint(main_bp)
+    app.register_blueprint(main_bp)
 
     logging.info("Flask application created and configured.")
     return app
