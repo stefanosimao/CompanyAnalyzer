@@ -4,12 +4,13 @@ history.json
 pe_firms.json
 uploads/
 reports/
+requirements.txt
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
 *$py.class
-*.pyc
+*.pycpyr
 
 # C extensions
 *.so
