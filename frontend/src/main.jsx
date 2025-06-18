@@ -1,7 +1,7 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-import App from './App.jsx'; // This will be your main React component
-import './index.css'; // Import the global CSS (which now includes Tailwind directives)
+import App from './App.jsx'; 
+import './index.css';
 
 // Find the root DOM element where your React app will be mounted
 const rootElement = document.getElementById('root');
