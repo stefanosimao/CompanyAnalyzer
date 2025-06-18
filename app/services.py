@@ -4,9 +4,13 @@ import uuid
 import pandas as pd
 from datetime import datetime, timedelta
 import threading
-import json 
-import time
+
+# Import Gemini API client
 import google.generativeai as genai
+# Import Tool and GoogleSearch types directly from google.generativeai.types
+from google.generativeai.types import Tool, GoogleSearch
+
+# Import utilities and config from the same package
 from . import utils
 from . import config
 
@@ -15,7 +19,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 
 def analyze_company(company_name: str, gemini_api_key: str, pe_firms_list: list) -> dict:
     """
-    Analyzes a single company by querying the Gemini API with search grounding
+    Analyzes a single company by querying the Gemini API with Google Search grounding
     to extract ownership, public/private status, PE ownership, revenue,
     employee count, nation, and the year of revenue/employee data.
 
@@ -47,7 +51,12 @@ def analyze_company(company_name: str, gemini_api_key: str, pe_firms_list: list)
 
     try:
         genai.configure(api_key=gemini_api_key)
-        model = genai.GenerativeModel('gemini-2.5-flash') 
+        
+        # Changed model name to 'gemini-2.5-flash'
+        model = genai.GenerativeModel(
+            'gemini-2.5-flash', # UPDATED MODEL NAME HERE
+            tools=[Tool(google_search=GoogleSearch())]
+        ) 
 
         prompt = (
             f"Please find comprehensive information for the company '{company_name}'. "
@@ -64,7 +73,6 @@ def analyze_company(company_name: str, gemini_api_key: str, pe_firms_list: list)
 
         response = model.generate_content(
             prompt,
-            tools=[genai.tool_code.GoogleSearch()],
             safety_settings=[
                 {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
                 {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
@@ -87,11 +95,12 @@ def analyze_company(company_name: str, gemini_api_key: str, pe_firms_list: list)
 
         logging.debug(f"Gemini raw response for {company_name}:\n{gemini_text_response}")
 
+        source_attributions = []
         if response.prompt_feedback and response.prompt_feedback.grounding_attributions:
             for attribution in response.prompt_feedback.grounding_attributions:
                 uri = attribution.web_uri or getattr(attribution, 'uri', None)
                 if uri:
-                    company_data["source_snippets"].append({
+                    source_attributions.append({
                         "snippet": attribution.snippet,
                         "url": uri,
                         "source_title": attribution.title
@@ -102,11 +111,13 @@ def analyze_company(company_name: str, gemini_api_key: str, pe_firms_list: list)
                     for attribution in candidate.grounding_attributions:
                         uri = getattr(attribution, 'uri', None) or getattr(attribution, 'web_uri', None)
                         if uri:
-                            company_data["source_snippets"].append({
+                            source_attributions.append({
                                 "snippet": getattr(attribution, 'content', 'No snippet provided'),
                                 "url": uri,
                                 "source_title": getattr(attribution, 'title', 'Unknown Source')
                             })
+        company_data["source_snippets"] = source_attributions
+
 
         response_lower = gemini_text_response.lower()
 
@@ -214,16 +225,6 @@ def research_pe_portfolio(pe_firm_name: str, gemini_api_key: str) -> dict:
 
     Returns:
         A dictionary containing the PE firm's profile and a list of its portfolio companies.
-        Example structure:
-        {
-            "name": "Bain Capital",
-            "profile_summary": "...",
-            "portfolio_companies": [
-                {"name": "Company A", "headquarters": "USA", "industry": "Tech"},
-                {"name": "Company B", "headquarters": "Germany", "industry": "Healthcare"}
-            ],
-            "error": None
-        }
     """
     logging.info(f"Initiating secondary research for PE firm: {pe_firm_name}")
     pe_data = {
@@ -235,9 +236,13 @@ def research_pe_portfolio(pe_firm_name: str, gemini_api_key: str) -> dict:
 
     try:
         genai.configure(api_key=gemini_api_key)
-        model = genai.GenerativeModel('gemini-2.5-flash')
 
-        # Prompt for PE firm profile and portfolio
+        # Changed model name to 'gemini-2.5-flash'
+        model = genai.GenerativeModel(
+            'gemini-2.5-flash', # UPDATED MODEL NAME HERE
+            tools=[Tool(google_search=GoogleSearch())]
+        )
+
         prompt = (
             f"Provide a concise profile summary for the Private Equity firm '{pe_firm_name}'.\n"
             f"Then, list its recent and current portfolio companies. For each portfolio company, provide its name, headquarters nation, and primary industry.\n"
@@ -252,7 +257,6 @@ def research_pe_portfolio(pe_firm_name: str, gemini_api_key: str) -> dict:
 
         response = model.generate_content(
             prompt,
-            tools=[genai.tool_code.GoogleSearch()],
             safety_settings=[
                 {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
                 {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
@@ -275,19 +279,15 @@ def research_pe_portfolio(pe_firm_name: str, gemini_api_key: str) -> dict:
 
         logging.debug(f"Gemini raw response for PE firm {pe_firm_name}:\n{gemini_text_response}")
 
-        # Extract profile summary
         profile_match = re.search(r"profile summary:(.*?)(?:portfolio companies:|error:|no recent portfolio companies found|\n\d\.|$)", gemini_text_response, re.DOTALL | re.IGNORECASE)
         if profile_match:
             pe_data["profile_summary"] = profile_match.group(1).strip()
-            # Clean up potential leading/trailing prompts
             if pe_data["profile_summary"].lower().startswith("profile summary:"):
                 pe_data["profile_summary"] = pe_data["profile_summary"][len("profile summary:"):].strip()
 
-        # Extract portfolio companies
         portfolio_section_match = re.search(r"portfolio companies:(.*?)(?:\n\d\.|$)", gemini_text_response, re.DOTALL | re.IGNORECASE)
         if portfolio_section_match:
             portfolio_text = portfolio_section_match.group(1).strip()
-            # Pattern for "1. Company X (USA, Software)"
             company_pattern = re.compile(r"^\s*\d+\.\s*(.+?)\s*\(([^,]+?),\s*(.+?)\)", re.MULTILINE | re.IGNORECASE)
             
             for line in portfolio_text.splitlines():
@@ -303,7 +303,7 @@ def research_pe_portfolio(pe_firm_name: str, gemini_api_key: str) -> dict:
                         })
         
         if not pe_data["portfolio_companies"] and "no recent portfolio companies found" in gemini_text_response.lower():
-            pe_data["portfolio_companies"] = "No recent portfolio companies found." # Indicate explicitly
+            pe_data["portfolio_companies"] = "No recent portfolio companies found."
 
     except genai.types.BlockedPromptException as e:
         logging.error(f"Gemini API blocked prompt for PE firm {pe_firm_name}: {e.response.prompt_feedback.block_reason.name}")
@@ -312,7 +312,7 @@ def research_pe_portfolio(pe_firm_name: str, gemini_api_key: str) -> dict:
         logging.error(f"Error researching PE firm {pe_firm_name} portfolio with Gemini: {e}", exc_info=True)
         pe_data["error"] = str(e)
 
-    logging.info(f"Finished secondary research for PE firm: {pe_firm_name}. Portfolio found: {len(pe_data['portfolio_companies'])}")
+    logging.info(f"Finished secondary research for PE firm: {pe_firm_name}. Portfolio found: {len(pe_data['portfolio_companies']) if isinstance(pe_data['portfolio_companies'], list) else 'N/A'}")
     return pe_data
 
 
@@ -334,7 +334,7 @@ def process_companies_in_background(companies_df: pd.DataFrame, report_id: str, 
     logging.info(f"Background analysis for report ID {report_id} started at {start_time}.")
 
     primary_results = []
-    unique_pe_owners_found = set() 
+    unique_pe_owners_found = set()
     total_companies = len(companies_df)
     
     for i, company_name in enumerate(companies_df['Company Name'].values):
@@ -345,6 +345,7 @@ def process_companies_in_background(companies_df: pd.DataFrame, report_id: str, 
 
         logging.info(f"Processing {i+1}/{total_companies}: {company_name_str}")
         
+        # Pass the API key directly to analyze_company
         data = analyze_company(company_name_str, gemini_api_key, pe_firms_list)
         primary_results.append(data)
 
@@ -356,8 +357,8 @@ def process_companies_in_background(companies_df: pd.DataFrame, report_id: str, 
     if unique_pe_owners_found:
         logging.info(f"Starting secondary research for {len(unique_pe_owners_found)} unique PE firms.")
         for pe_firm in unique_pe_owners_found:
+            # Pass the API key directly to research_pe_portfolio
             pe_firms_insights[pe_firm] = research_pe_portfolio(pe_firm, gemini_api_key)
-            time.sleep(0.5)
     else:
         logging.info("No Private Equity firms identified in the primary analysis for secondary research.")
 
@@ -366,11 +367,10 @@ def process_companies_in_background(companies_df: pd.DataFrame, report_id: str, 
     duration_seconds = duration.total_seconds()
     logging.info(f"Background analysis for report ID {report_id} completed at {end_time}. Duration: {duration}.")
 
-    # Define the path where the completed report will be saved
     report_data = {
         "report_name": report_name,
-        "data": primary_results, # Renamed for clarity
-        "pe_firms_insights": pe_firms_insights, # NEW: Add PE insights to report
+        "data": primary_results,
+        "pe_firms_insights": pe_firms_insights,
         "analysis_duration_seconds": duration_seconds,
         "analysis_start_time": start_time.isoformat(),
         "analysis_end_time": end_time.isoformat()
@@ -378,7 +378,6 @@ def process_companies_in_background(companies_df: pd.DataFrame, report_id: str, 
     report_path = os.path.join(config.REPORTS_FOLDER, f'{report_id}.json')
     utils.save_json_file(report_path, report_data)
     
-    # Update the analysis history with the completion status and duration
     history = utils.load_history()
     updated = False
     for entry in history:
@@ -455,3 +454,4 @@ def start_company_analysis(companies_df: pd.DataFrame) -> dict:
         "report_id": report_id,
         "report_name": report_name
     }
+
