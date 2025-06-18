@@ -91,7 +91,7 @@ def load_settings() -> Any:
     Returns:
         The loaded settings data, or default/empty dict if file is missing or corrupt.
     """
-    import config  # Lazy import to avoid circular imports
+    from . import config  # Lazy import to avoid circular imports
     return load_json_file(config.SETTINGS_FILE)
 
 def save_settings(settings: Any) -> None:
@@ -104,7 +104,7 @@ def save_settings(settings: Any) -> None:
     Raises:
         OSError: If file writing fails.
     """
-    import config
+    from . import config
     save_json_file(config.SETTINGS_FILE, settings)
     logging.info("Settings updated.")
 
@@ -115,7 +115,7 @@ def load_history() -> list:
     Returns:
         The loaded history data, or an empty list if file is missing or corrupt.
     """
-    import config
+    from . import config
     return load_json_file(config.HISTORY_FILE, default_value_func=lambda: [])
 
 def save_history(history: list) -> None:
@@ -128,7 +128,7 @@ def save_history(history: list) -> None:
     Raises:
         OSError: If file writing fails.
     """
-    import config
+    from . import config
     save_json_file(config.HISTORY_FILE, history)
     logging.info("History updated.")
 
@@ -139,7 +139,7 @@ def load_pe_firms() -> Any:
     Returns:
         The loaded private equity firms data, or default value if file is missing or corrupt.
     """
-    import config
+    from . import config
     return load_json_file(config.PE_LIST_FILE, default_value_func=config.get_default_pe_firms)
 
 def save_pe_firms(pe_firms: Any) -> None:
@@ -152,7 +152,7 @@ def save_pe_firms(pe_firms: Any) -> None:
     Raises:
         OSError: If file writing fails.
     """
-    import config
+    from . import config
     save_json_file(config.PE_LIST_FILE, pe_firms)
     logging.info("Private equity firms list updated.")
 
@@ -169,7 +169,7 @@ def allowed_file(filename: str) -> bool:
     Raises:
         TypeError: If filename is not a string.
     """
-    import config
+    from . import config
     if not isinstance(filename, str):
         raise TypeError(f"filename must be a string, got {type(filename).__name__}")
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in config.ALLOWED_EXTENSIONS
@@ -181,7 +181,7 @@ def ensure_dirs() -> None:
     Raises:
         OSError: If directory creation fails.
     """
-    import config
+    from . import config
     try:
         os.makedirs(config.UPLOAD_FOLDER, exist_ok=True)
         os.makedirs(config.REPORTS_FOLDER, exist_ok=True)
