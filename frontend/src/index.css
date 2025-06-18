@@ -1,0 +1,46 @@
+    @tailwind base;
+    @tailwind components;
+    @tailwind utilities;
+
+    /* Global styles */
+    body {
+        font-family: 'Inter', sans-serif;
+        background-color: #f3f4f6; /* Light gray background */
+        color: #333;
+    }
+
+    .ph {
+        display: inline-block;
+    }
+
+    .active-nav {
+        background-color: #4f46e5;
+        color: white;
+    }
+
+    /* Basic scrollbar styling */
+    ::-webkit-scrollbar {
+        width: 8px;
+        height: 8px;
+    }
+
+    ::-webkit-scrollbar-track {
+        background: #e0e0e0;
+        border-radius: 10px;
+    }
+
+    ::-webkit-scrollbar-thumb {
+        background: #888;
+        border-radius: 10px;
+    }
+
+    ::-webkit-scrollbar-thumb:hover {
+        background: #555;
+    }
+
+    /* For Firefox */
+    html {
+        scrollbar-width: thin;
+        scrollbar-color: #888 #e0e0e0;
+    }
+    
