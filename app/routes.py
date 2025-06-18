@@ -161,4 +161,3 @@ def handle_pe_firms():
     else: # GET request
         pe_firms = utils.load_pe_firms()
         return jsonify(pe_firms), 200
-
