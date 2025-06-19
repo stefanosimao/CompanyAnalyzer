@@ -1,63 +1,118 @@
-import logging
+import os
 import re
 import uuid
+import logging
+from datetime import datetime
+from pathlib import Path
+from threading import Thread
+from typing import Any, Dict, List, Union
 import pandas as pd
-from datetime import datetime, timedelta
-import threading
+from google import genai
+from google.genai import types
 
-# Import Gemini API client
-import google.generativeai as genai
-# Import Tool and GoogleSearch types directly from google.generativeai.types
-from google.generativeai.types import Tool, GoogleSearch
+from . import utils, config
 
-# Import utilities and config from the same package
-from . import utils
-from . import config
+# Configure module-level logger
+logger = logging.getLogger(__name__)
+if not logger.handlers:
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+    logger.addHandler(handler)
+logger.setLevel(logging.INFO)
 
-# Configure logging for this module
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+NATIONS = [
+    "Switzerland", "Germany", "France", "UK", "United Kingdom", "USA", "United States", "Canada",
+    "China", "India", "Japan", "Australia", "Italy", "Spain", "Netherlands",
+    "Belgium", "Sweden", "Norway", "Denmark", "Finland", "Austria", "Ireland",
+    "Portugal", "Singapore", "South Korea", "Brazil", "Mexico", "South Africa",
+    "United Arab Emirates", "Luxembourg", "Cayman Islands", "Jersey", "Guernsey"
+]
 
-def analyze_company(company_name: str, gemini_api_key: str, pe_firms_list: list) -> dict:
+def _configure_genai(api_key: str) -> genai.Client:
+    """Set up the Gemini API key."""
+    return genai.Client(api_key=api_key)
+
+
+def _init_config() -> types.GenerateContentConfig:
+    """Instantiate a configured Gemini model with tools."""
+    grounding_tool = types.Tool(google_search=types.GoogleSearch())
+    return types.GenerateContentConfig(tools=[grounding_tool])
+
+
+def _extract_text(response: Any) -> str:
+    """Concatenate text parts from the first candidate of a Gemini response."""
+    candidates = getattr(response, 'candidates', [])
+    if not candidates:
+        # fallback if someone passed in a bare object with `.text`
+        return getattr(response, 'text', '')  
+    parts = getattr(candidates[0].content, 'parts', [])
+    # join whatever .text exists (defaults to empty string)
+    return ''.join(getattr(part, 'text', '') for part in parts)
+
+
+def _extract_grounding(response: Any) -> List[Dict[str, str]]:
+    """Extract grounding attributions (snippet, url, title) from response."""
+    snippets: List[Dict[str, str]] = []
+    
+    # Try prompt_feedback.grounding_attributions first
+    feedback = getattr(response, 'prompt_feedback', None)
+    if feedback and hasattr(feedback, 'grounding_attributions') and feedback.grounding_attributions:
+        for attr in feedback.grounding_attributions:
+            uri = getattr(attr, 'web_uri', None) or getattr(attr, 'uri', None)
+            if uri:
+                snippets.append({
+                    'snippet': getattr(attr, 'snippet', ''),
+                    'url': uri,
+                    'source_title': getattr(attr, 'title', '')
+                })
+        return snippets
+
+    # Fallback to candidates' grounding_attributions
+    if hasattr(response, 'candidates') and response.candidates:
+        for cand in response.candidates:
+            if hasattr(cand, 'grounding_attributions') and cand.grounding_attributions:
+                for attr in cand.grounding_attributions:
+                    uri = getattr(attr, 'uri', None) or getattr(attr, 'web_uri', None)
+                    if uri:
+                        snippets.append({
+                            'snippet': getattr(attr, 'content', 'No snippet provided'),
+                            'url': uri,
+                            'source_title': getattr(attr, 'title', 'Unknown Source')
+                        })
+    return snippets
+
+
+def analyze_company(
+    company_name: str,
+    gemini_api_key: str,
+    pe_firms_list: List[str]
+) -> Dict[str, Union[str, bool, List[str], List[Dict[str, str]], None]]:
     """
-    Analyzes a single company by querying the Gemini API with Google Search grounding
-    to extract ownership, public/private status, PE ownership, revenue,
-    employee count, nation, and the year of revenue/employee data.
-
-    Args:
-        company_name: The name of the company to analyze.
-        gemini_api_key: The API key for accessing the Gemini API.
-        pe_firms_list: A list of known private equity firm names for identification.
-
-    Returns:
-        A dictionary containing the extracted company data.
+    Analyze a company via Gemini: public/private status, ownership, financials, etc.
     """
-    logging.info(f"Initiating analysis for company: {company_name}")
-    company_data = {
-        "company_name": company_name,
-        "ownership_structure": "N/A",
-        "public_private": "Unknown",
-        "is_pe_owned": False,
-        "pe_owner_names": [],
-        "is_itself_pe": False,
-        "revenue": "N/A",
-        "revenue_year": "N/A",
-        "employees": "N/A",
-        "employees_year": "N/A",
-        "nation": "Unknown",
-        "flagged_as_pe_account": False,
-        "source_snippets": [],
-        "error": None
+    logger.info('Initiating analysis for company: %s', company_name)
+    data = {
+        'company_name': company_name,
+        'ownership_structure': 'N/A',
+        'public_private': 'Unknown',
+        'is_pe_owned': False,
+        'pe_owner_names': [],
+        'is_itself_pe': False,
+        'revenue': 'N/A',
+        'revenue_year': 'N/A',
+        'employees': 'N/A',
+        'employees_year': 'N/A',
+        'nation': 'Unknown',
+        'flagged_as_pe_account': False,
+        'source_snippets': [],
+        'error': None
     }
 
     try:
-        genai.configure(api_key=gemini_api_key)
-        
-        # Changed model name to 'gemini-2.5-flash'
-        model = genai.GenerativeModel(
-            'gemini-2.5-flash', # UPDATED MODEL NAME HERE
-            tools=[Tool(google_search=GoogleSearch())]
-        ) 
+        client = _configure_genai(gemini_api_key)
+        config = _init_config()
 
+        # Reverted to more detailed prompt for better structured output
         prompt = (
             f"Please find comprehensive information for the company '{company_name}'. "
             "Specifically, identify the following details:\n"
@@ -71,180 +126,134 @@ def analyze_company(company_name: str, gemini_api_key: str, pe_firms_list: list)
             "Prioritize reliable sources. Do not make up information. Use your internal search tools effectively."
         )
 
-        response = model.generate_content(
-            prompt,
-            safety_settings=[
-                {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
-                {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
-                {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
-                {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
-            ]
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt,
+            config=config,
         )
 
-        gemini_text_response = ""
-        if response and hasattr(response, "candidates") and response.candidates:
-            content_parts = getattr(response.candidates[0].content, "parts", [])
-            gemini_text_response = "".join(
-                part.text for part in content_parts if hasattr(part, "text") and part.text
-            )
-        
-        if not gemini_text_response:
-             logging.warning(f"No text content in Gemini response for {company_name}. Full response: {response}")
-             company_data["error"] = "Gemini returned no text content."
-             return company_data
+        text = _extract_text(response)
+        if not text:
+            msg = f"Gemini returned no text content for {company_name}."
+            logger.warning(msg)
+            data['error'] = msg
+            return data
 
-        logging.debug(f"Gemini raw response for {company_name}:\n{gemini_text_response}")
+        data['source_snippets'] = _extract_grounding(response)
+        text_lower = text.lower()
 
-        source_attributions = []
-        if response.prompt_feedback and response.prompt_feedback.grounding_attributions:
-            for attribution in response.prompt_feedback.grounding_attributions:
-                uri = attribution.web_uri or getattr(attribution, 'uri', None)
-                if uri:
-                    source_attributions.append({
-                        "snippet": attribution.snippet,
-                        "url": uri,
-                        "source_title": attribution.title
-                    })
-        elif hasattr(response, 'candidates') and response.candidates:
-            for candidate in response.candidates:
-                if hasattr(candidate, 'grounding_attributions') and candidate.grounding_attributions:
-                    for attribution in candidate.grounding_attributions:
-                        uri = getattr(attribution, 'uri', None) or getattr(attribution, 'web_uri', None)
-                        if uri:
-                            source_attributions.append({
-                                "snippet": getattr(attribution, 'content', 'No snippet provided'),
-                                "url": uri,
-                                "source_title": getattr(attribution, 'title', 'Unknown Source')
-                            })
-        company_data["source_snippets"] = source_attributions
+        # Public vs Private - Reverted to more robust regex
+        if "public/private ownership: public" in text_lower or "publicly traded" in text_lower:
+            data["public_private"] = "Public"
+        elif "public/private ownership: private" in text_lower or "privately owned" in text_lower:
+            data["public_private"] = "Private"
+        else: # Fallback to regex
+            if re.search(r'\bpublic(?:ly| traded)? (?:company|entity)\b', text_lower):
+                data["public_private"] = "Public"
+            elif re.search(r'\bprivate(?:ly| owned| held)? (?:company|entity)\b', text_lower):
+                data["public_private"] = "Private"
 
+        # Self-PE check - Kept existing robust regex
+        if re.search(r"\bis (?:itself )?a private equity firm\b", text_lower):
+            data['is_itself_pe'] = True
+            data['public_private'] = 'Private'
 
-        response_lower = gemini_text_response.lower()
-
-        if "public/private ownership: public" in response_lower or "publicly traded" in response_lower:
-            company_data["public_private"] = "Public"
-        elif "public/private ownership: private" in response_lower or "privately owned" in response_lower:
-            company_data["public_private"] = "Private"
-        else:
-            if re.search(r'\bpublic(?:ly| traded)? (?:company|entity)\b', response_lower):
-                company_data["public_private"] = "Public"
-            elif re.search(r'\bprivate(?:ly| owned| held)? (?:company|entity)\b', response_lower):
-                company_data["public_private"] = "Private"
-
-        if "self-identification as pe: yes" in response_lower or re.search(r'\b(?:is|is itself) a private equity firm\b', response_lower):
-            company_data["is_itself_pe"] = True
-            company_data["public_private"] = "Private"
-
-        owner_match = re.search(r"ownership structure:(.*?)(?:\n\d\.|$)", gemini_text_response, re.DOTALL | re.IGNORECASE)
+        # Ownership structure - Reverted regex for better section termination
+        owner_match = re.search(r"ownership structure:(.*?)(?:\n\d\.|$)", text, re.DOTALL | re.IGNORECASE)
         if owner_match:
-            owner_text = owner_match.group(1).strip()
-            company_data["ownership_structure"] = owner_text
+            owners_txt = owner_match.group(1).strip()
+            data["ownership_structure"] = owners_txt
 
             potential_owners = []
             for pe_firm in pe_firms_list:
-                if re.search(rf"\b{re.escape(pe_firm.lower())}\b", owner_text.lower()):
-                    company_data["is_pe_owned"] = True
-                    company_data["pe_owner_names"].append(pe_firm)
+                # Improved: Use re.search with word boundaries and re.escape
+                if re.search(rf"\b{re.escape(pe_firm.lower())}\b", owners_txt.lower()):
+                    data["is_pe_owned"] = True
+                    data["pe_owner_names"].append(pe_firm)
             
-            if re.search(r'\b(?:family|founder|individual|private investor)\b', owner_text.lower()):
+            if re.search(r'\b(?:family|founder|individual|private investor)\b', owners_txt.lower()):
                 potential_owners.append("Family/Private Individuals")
-            if re.search(r'\b(?:institutional investor|pension fund|sovereign wealth fund)\b', owner_text.lower()):
+            if re.search(r'\b(?:institutional investor|pension fund|sovereign wealth fund)\b', owners_txt.lower()):
                 potential_owners.append("Institutional Investors")
-            if re.search(r'\b(?:investment banking|venture capital)\b', owner_text.lower()):
+            if re.search(r'\b(?:investment banking|venture capital)\b', owners_txt.lower()):
                 potential_owners.append("Investment Firms/VC")
 
-            if not company_data["is_pe_owned"] and potential_owners:
-                company_data["ownership_structure"] = ", ".join(list(set(potential_owners)))
-            elif company_data["is_pe_owned"]:
-                existing_owners = [o.strip() for o in company_data["ownership_structure"].split(',') if o.strip()]
-                all_owners = list(set(company_data["pe_owner_names"] + existing_owners))
-                company_data["ownership_structure"] = ", ".join(all_owners)
+            if not data["is_pe_owned"] and potential_owners:
+                data["ownership_structure"] = ", ".join(list(set(potential_owners)))
+            elif data["is_pe_owned"]:
+                # Ensure existing owners are combined with identified PE owners
+                existing_owners = [o.strip() for o in data["ownership_structure"].split(',') if o.strip()]
+                all_owners = list(set(data["pe_owner_names"] + existing_owners))
+                data["ownership_structure"] = ", ".join(all_owners)
             
-            if company_data["is_pe_owned"]:
-                company_data["flagged_as_pe_account"] = True
+            if data["is_pe_owned"]:
+                data["flagged_as_pe_account"] = True
 
-        revenue_match = re.search(
+
+        # Revenue
+        rev = re.search(
             r"(?:revenue|annual revenue|turnover):\s*(\$|€|£)?\s*([\d\.,]+)\s*(?:million|billion|k|M|B|trillion)?\s*(?:year\s*)?\(?(\d{4})?\)?",
-            gemini_text_response, re.IGNORECASE
+            text_lower
         )
-        if revenue_match:
-            currency = revenue_match.group(1) if revenue_match.group(1) else ""
-            amount = revenue_match.group(2).replace(",", "")
-            unit = revenue_match.group(3) if revenue_match.group(3) else ""
-            year = revenue_match.group(4) if revenue_match.group(4) else "N/A"
+        if rev:
+            currency = rev.group(1) if rev.group(1) else ""
+            amount = rev.group(2).replace(",", "")
+            unit = rev.group(3) if rev.group(3) else ""
+            year = rev.group(4) if rev.group(4) else "N/A"
             
             if unit.lower() == 'k': unit = 'thousand'
             elif unit.lower() == 'm': unit = 'million'
             elif unit.lower() == 'b': unit = 'billion'
             
-            company_data["revenue"] = f"{currency}{amount} {unit}".strip()
-            company_data["revenue_year"] = year
+            data["revenue"] = f"{currency}{amount} {unit}".strip()
+            data["revenue_year"] = year
 
-        employees_match = re.search(
+        # Employees
+        emp = re.search(
             r"(?:employees|staff|workforce|headcount):\s*([\d\.,]+)\s*(?:employees)?\s*(?:year\s*)?\(?(\d{4})?\)?",
-            gemini_text_response, re.IGNORECASE
+            text_lower
         )
-        if employees_match:
-            company_data["employees"] = employees_match.group(1).replace(",", "")
-            company_data["employees_year"] = employees_match.group(2) if employees_match.group(2) else "N/A"
+        if emp:
+            data["employees"] = emp.group(1).replace(",", "")
+            data["employees_year"] = emp.group(2) if emp.group(2) else "N/A"
 
-        nation_match = re.search(r"nation \(headquarters\):\s*([A-Za-z\s-]+(?:, [A-Za-z\s-]+)?)", gemini_text_response, re.IGNORECASE)
+        # Nation - Reverted to more robust extraction logic
+        nation_match = re.search(r"nation \(headquarters\):\s*([A-Za-z\s-]+(?:, [A-Za-z\s-]+)?)", text, re.IGNORECASE)
         if nation_match:
-            company_data["nation"] = nation_match.group(1).strip()
-        else:
-            nations_list = [
-                "Switzerland", "Germany", "France", "UK", "United Kingdom", "USA", "United States", "Canada",
-                "China", "India", "Japan", "Australia", "Italy", "Spain", "Netherlands", "Belgium",
-                "Sweden", "Norway", "Denmark", "Finland", "Austria", "Ireland", "Portugal",
-                "Singapore", "South Korea", "Brazil", "Mexico", "South Africa", "UAE", "United Arab Emirates",
-                "Luxembourg", "Cayman Islands", "Jersey", "Guernsey"
-            ]
-            for nation in nations_list:
-                if re.search(rf'\b{re.escape(nation)}\b', response_lower):
-                    company_data["nation"] = nation
+            data["nation"] = nation_match.group(1).strip()
+        else: # Fallback to general keyword matching with word boundaries
+            for nation in NATIONS:
+                # Improved: Use re.search with word boundaries and re.escape
+                if re.search(rf'\b{re.escape(nation.lower())}\b', text_lower):
+                    data["nation"] = nation
                     break
 
     except genai.types.BlockedPromptException as e:
-        logging.error(f"Gemini API blocked prompt for {company_name}: {e.response.prompt_feedback.block_reason.name}")
-        company_data["error"] = f"Gemini API blocked prompt: {e.response.prompt_feedback.block_reason.name}"
-    except Exception as e:
-        logging.error(f"Error analyzing {company_name} with Gemini: {e}", exc_info=True)
-        company_data["error"] = str(e)
+        reason = e.response.prompt_feedback.block_reason.name
+        logger.error("Gemini API blocked prompt for %s: %s", company_name, reason)
+        data['error'] = f"Gemini API blocked prompt: {reason}"
+    except Exception:
+        logger.exception("Error analyzing %s with Gemini", company_name)
+        data['error'] = 'An unexpected error occurred during analysis.'
 
-    logging.info(f"Finished analysis for {company_name}. Data: {company_data}")
-    return company_data
+    logger.info('Finished analysis for %s. Data: %s', company_name, data)
+    return data
 
-def research_pe_portfolio(pe_firm_name: str, gemini_api_key: str) -> dict:
+
+def research_pe_portfolio(pe_name: str, gemini_api_key: str) -> Dict[str, Union[str, List[Dict[str, str]], None]]: # Corrected type hint
     """
-    Performs secondary research on a given Private Equity firm to find its profile
-    and current portfolio companies, their headquarters, and industries.
-
-    Args:
-        pe_firm_name: The name of the Private Equity firm.
-        gemini_api_key: The API key for accessing the Gemini API.
-
-    Returns:
-        A dictionary containing the PE firm's profile and a list of its portfolio companies.
+    Secondary research: profile summary and portfolio companies for a PE firm.
     """
-    logging.info(f"Initiating secondary research for PE firm: {pe_firm_name}")
-    pe_data = {
-        "name": pe_firm_name,
-        "profile_summary": "N/A",
-        "portfolio_companies": [],
-        "error": None
-    }
+    logger.info('Initiating secondary research for PE firm: %s', pe_name)
+    result = {'name': pe_name, 'profile_summary': 'N/A', 'portfolio_companies': [], 'error': None}
 
     try:
-        genai.configure(api_key=gemini_api_key)
+        client = _configure_genai(gemini_api_key)
+        config = _init_config()
 
-        # Changed model name to 'gemini-2.5-flash'
-        model = genai.GenerativeModel(
-            'gemini-2.5-flash', # UPDATED MODEL NAME HERE
-            tools=[Tool(google_search=GoogleSearch())]
-        )
-
+        # Reverted to more detailed prompt for better structured output
         prompt = (
-            f"Provide a concise profile summary for the Private Equity firm '{pe_firm_name}'.\n"
+            f"Provide a concise profile summary for the Private Equity firm '{pe_name}'.\n"
             f"Then, list its recent and current portfolio companies. For each portfolio company, provide its name, headquarters nation, and primary industry.\n"
             "Format the portfolio companies as a numbered list with each item showing 'Name (Headquarters, Industry)'.\n"
             "Example:\n"
@@ -254,38 +263,27 @@ def research_pe_portfolio(pe_firm_name: str, gemini_api_key: str) -> dict:
             "2. Company Y (Germany, Automotive)\n"
             "If no portfolio companies are found, state 'No recent portfolio companies found'."
         )
-
-        response = model.generate_content(
-            prompt,
-            safety_settings=[
-                {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
-                {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
-                {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
-                {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
-            ]
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt,
+            config=config,
         )
-        
-        gemini_text_response = ""
-        if response and hasattr(response, "candidates") and response.candidates:
-            content_parts = getattr(response.candidates[0].content, "parts", [])
-            gemini_text_response = "".join(
-                part.text for part in content_parts if hasattr(part, "text") and part.text
-            )
+        text = _extract_text(response)
+        if not text:
+            msg = f"Gemini returned no text content for PE firm {pe_name}."
+            logger.warning(msg)
+            result['error'] = msg
+            return result
 
-        if not gemini_text_response:
-             logging.warning(f"No text content in Gemini response for PE firm {pe_firm_name}. Full response: {response}")
-             pe_data["error"] = "Gemini returned no text content for PE portfolio."
-             return pe_data
-
-        logging.debug(f"Gemini raw response for PE firm {pe_firm_name}:\n{gemini_text_response}")
-
-        profile_match = re.search(r"profile summary:(.*?)(?:portfolio companies:|error:|no recent portfolio companies found|\n\d\.|$)", gemini_text_response, re.DOTALL | re.IGNORECASE)
+        # Extract summary
+        profile_match = re.search(r"profile summary:(.*?)(?:portfolio companies:|error:|no recent portfolio companies found|\n\d\.|$)", text, re.DOTALL | re.IGNORECASE)
         if profile_match:
-            pe_data["profile_summary"] = profile_match.group(1).strip()
-            if pe_data["profile_summary"].lower().startswith("profile summary:"):
-                pe_data["profile_summary"] = pe_data["profile_summary"][len("profile summary:"):].strip()
+            result['profile_summary'] = profile_match.group(1).strip()
+            if result["profile_summary"].lower().startswith("profile summary:"):
+                result["profile_summary"] = result["profile_summary"][len("profile summary:"):].strip()
 
-        portfolio_section_match = re.search(r"portfolio companies:(.*?)(?:\n\d\.|$)", gemini_text_response, re.DOTALL | re.IGNORECASE)
+        # Extract portfolio
+        portfolio_section_match = re.search(r"portfolio companies:(.*?)(?:\n\d\.|$)", text, re.DOTALL | re.IGNORECASE)
         if portfolio_section_match:
             portfolio_text = portfolio_section_match.group(1).strip()
             company_pattern = re.compile(r"^\s*\d+\.\s*(.+?)\s*\(([^,]+?),\s*(.+?)\)", re.MULTILINE | re.IGNORECASE)
@@ -296,162 +294,123 @@ def research_pe_portfolio(pe_firm_name: str, gemini_api_key: str) -> dict:
                     match = company_pattern.match(line)
                     if match:
                         name, headquarters, industry = match.groups()
-                        pe_data["portfolio_companies"].append({
+                        result["portfolio_companies"].append({
                             "name": name.strip(),
                             "headquarters": headquarters.strip(),
                             "industry": industry.strip()
                         })
         
-        if not pe_data["portfolio_companies"] and "no recent portfolio companies found" in gemini_text_response.lower():
-            pe_data["portfolio_companies"] = "No recent portfolio companies found."
+        if not result["portfolio_companies"] and "no recent portfolio companies found" in text.lower():
+            result["portfolio_companies"] = [] # Ensure it's an empty list if not found explicitly
 
     except genai.types.BlockedPromptException as e:
-        logging.error(f"Gemini API blocked prompt for PE firm {pe_firm_name}: {e.response.prompt_feedback.block_reason.name}")
-        pe_data["error"] = f"Gemini API blocked prompt for PE portfolio: {e.response.prompt_feedback.block_reason.name}"
-    except Exception as e:
-        logging.error(f"Error researching PE firm {pe_firm_name} portfolio with Gemini: {e}", exc_info=True)
-        pe_data["error"] = str(e)
+        reason = e.response.prompt_feedback.block_reason.name
+        logger.error("Gemini API blocked prompt for PE firm %s: %s", pe_name, reason)
+        result['error'] = f"Gemini API blocked prompt for PE portfolio: {reason}"
+    except Exception:
+        logger.exception("Error researching %s with Gemini", pe_name)
+        result['error'] = 'An unexpected error occurred during PE research.'
 
-    logging.info(f"Finished secondary research for PE firm: {pe_firm_name}. Portfolio found: {len(pe_data['portfolio_companies']) if isinstance(pe_data['portfolio_companies'], list) else 'N/A'}")
-    return pe_data
+    logger.info('Finished PE research for %s. Portfolio found: %s', pe_name, len(result['portfolio_companies']) if isinstance(result['portfolio_companies'], list) else 'N/A')
+    return result
 
 
-def process_companies_in_background(companies_df: pd.DataFrame, report_id: str, report_name: str, gemini_api_key: str, pe_firms_list: list) -> None:
-    """
-    Background task to process companies from a DataFrame, save the final report,
-    and then perform secondary research on identified PE firms.
-    This function is designed to be run in a separate thread.
-    It also calculates and records the total analysis duration.
+def _background_worker(
+    companies: pd.DataFrame,
+    report_id: str,
+    report_name: str,
+    gemini_api_key: str,
+    pe_firms_list: List[str]
+) -> None:
+    start = datetime.now()
+    logger.info('Background worker started for report ID: %s', report_id)
+    results = []
+    unique_pe = set()
 
-    Args:
-        companies_df: Pandas DataFrame containing company names.
-        report_id: Unique identifier for the report.
-        report_name: Human-readable name for the report.
-        gemini_api_key: API key for Gemini.
-        pe_firms_list: List of known PE firms.
-    """
-    start_time = datetime.now()
-    logging.info(f"Background analysis for report ID {report_id} started at {start_time}.")
-
-    primary_results = []
-    unique_pe_owners_found = set()
-    total_companies = len(companies_df)
-    
-    for i, company_name in enumerate(companies_df['Company Name'].values):
-        if pd.isna(company_name) or str(company_name).strip() == "":
-            logging.warning(f"Skipping empty company name at index {i}.")
+    for idx, row in companies.iterrows():
+        name = row.get('Company Name')
+        if not name or pd.isna(name):
+            logger.warning("Skipping empty company name at index %s.", idx)
             continue
-        company_name_str = str(company_name).strip()
+        data = analyze_company(str(name).strip(), gemini_api_key, pe_firms_list)
+        results.append(data)
+        if data.get('is_pe_owned') and data.get('pe_owner_names'):
+            unique_pe.update(data.get('pe_owner_names', []))
 
-        logging.info(f"Processing {i+1}/{total_companies}: {company_name_str}")
-        
-        # Pass the API key directly to analyze_company
-        data = analyze_company(company_name_str, gemini_api_key, pe_firms_list)
-        primary_results.append(data)
+    pe_firms_insights = {pe: research_pe_portfolio(pe, gemini_api_key) for pe in unique_pe}
 
-        if data.get("is_pe_owned") and data.get("pe_owner_names"):
-            for pe_owner in data["pe_owner_names"]:
-                unique_pe_owners_found.add(pe_owner)
-    
-    pe_firms_insights = {}
-    if unique_pe_owners_found:
-        logging.info(f"Starting secondary research for {len(unique_pe_owners_found)} unique PE firms.")
-        for pe_firm in unique_pe_owners_found:
-            # Pass the API key directly to research_pe_portfolio
-            pe_firms_insights[pe_firm] = research_pe_portfolio(pe_firm, gemini_api_key)
-    else:
-        logging.info("No Private Equity firms identified in the primary analysis for secondary research.")
-
-    end_time = datetime.now()
-    duration = end_time - start_time
-    duration_seconds = duration.total_seconds()
-    logging.info(f"Background analysis for report ID {report_id} completed at {end_time}. Duration: {duration}.")
-
-    report_data = {
-        "report_name": report_name,
-        "data": primary_results,
-        "pe_firms_insights": pe_firms_insights,
-        "analysis_duration_seconds": duration_seconds,
-        "analysis_start_time": start_time.isoformat(),
-        "analysis_end_time": end_time.isoformat()
+    end = datetime.now()
+    duration_seconds = (end - start).total_seconds()
+    report = {
+        'report_name': report_name,
+        'data': results,
+        'pe_firms_insights': pe_firms_insights, # Corrected: 'pe_insights' changed back to 'pe_firms_insights'
+        'analysis_duration_seconds': duration_seconds,
+        'analysis_start_time': start.isoformat(),
+        'analysis_end_time': end.isoformat()
     }
-    report_path = os.path.join(config.REPORTS_FOLDER, f'{report_id}.json')
-    utils.save_json_file(report_path, report_data)
+    path = Path(config.REPORTS_FOLDER) / f"{report_id}.json"
+    utils.save_json_file(str(path), report) # Corrected: Convert Path object to string
     
     history = utils.load_history()
+    # Find and update the existing history entry, or add a new one if not found (shouldn't happen normally)
     updated = False
     for entry in history:
         if entry['id'] == report_id:
-            entry["status"] = "Completed"
-            entry["file_path"] = report_path
-            entry["completed_at"] = datetime.now().isoformat()
-            entry["analysis_duration_seconds"] = duration_seconds
+            entry.update({
+                'status': 'Completed',
+                'file_path': str(path),
+                'completed_at': datetime.now().isoformat(),
+                'analysis_duration_seconds': duration_seconds
+            })
             updated = True
             break
     if not updated:
-        logging.warning(f"Report ID {report_id} not found in history after completion. Adding new entry.")
-        history_entry = {
-            "id": report_id,
-            "name": report_name,
-            "date": start_time.isoformat(),
-            "status": "Completed",
-            "num_companies": total_companies,
-            "file_path": report_path,
-            "completed_at": datetime.now().isoformat(),
-            "analysis_duration_seconds": duration_seconds
-        }
-        history.insert(0, history_entry)
+        logger.warning("Report ID %s not found in history after completion. Adding as new entry.", report_id)
+        history.insert(0, {
+            'id': report_id,
+            'name': report_name,
+            'date': start.isoformat(),
+            'status': 'Completed',
+            'num_companies': len(companies), # Use original DataFrame length for consistency
+            'file_path': str(path),
+            'completed_at': datetime.now().isoformat(),
+            'analysis_duration_seconds': duration_seconds
+        })
 
     utils.save_history(history)
-    logging.info(f"Report '{report_name}' (ID: {report_id}) analysis completed and saved.")
+    logger.info('Background worker completed for report ID: %s', report_id)
 
-def start_company_analysis(companies_df: pd.DataFrame) -> dict:
-    """
-    Initiates the company analysis process in a background thread.
-    This function is called by the Flask route handler.
 
-    Args:
-        companies_df: Pandas DataFrame containing company names from the uploaded Excel.
-
-    Returns:
-        A dictionary with status message and report ID/name if successful,
-        or an error message.
-    """
+def start_company_analysis(companies_df: pd.DataFrame) -> Dict[str, str]:
     settings = utils.load_settings()
     gemini_api_key = settings.get('gemini_api_key')
-    pe_firms_list = utils.load_pe_firms()
-
+    
     if not gemini_api_key:
-        logging.error("Gemini API Key is not configured.")
-        return {"error": "Gemini API Key is not configured. Please set it in settings."}
+        logger.error('Gemini API Key is not configured. Please set it in settings.')
+        return {'error': 'Gemini API Key is not configured. Please set it in settings.'}
 
     report_id = str(uuid.uuid4())
-    report_name = f"Analysis Report - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+    report_name = f"Analysis Report - {datetime.now():%Y-%m-%d %H:%M:%S}" # More descriptive name
 
     history = utils.load_history()
-    history_entry = {
-        "id": report_id,
-        "name": report_name,
-        "date": datetime.now().isoformat(),
-        "status": "Pending",
-        "num_companies": len(companies_df),
-        "file_path": None,
-        "completed_at": None,
-        "analysis_duration_seconds": None
-    }
-    history.insert(0, history_entry)
+    history.insert(0, {
+        'id': report_id,
+        'name': report_name,
+        'date': datetime.now().isoformat(),
+        'status': 'Pending',
+        'num_companies': len(companies_df),
+        'file_path': None,
+        'completed_at': None,
+        'analysis_duration_seconds': None
+    })
     utils.save_history(history)
-    
-    thread = threading.Thread(
-        target=process_companies_in_background,
-        args=(companies_df, report_id, report_name, gemini_api_key, pe_firms_list)
-    )
-    thread.start()
-    logging.info(f"Background analysis thread started for report ID: {report_id}")
 
-    return {
-        "message": "File uploaded and analysis started! You can check the history for status.",
-        "report_id": report_id,
-        "report_name": report_name
-    }
+    Thread(
+        target=_background_worker,
+        args=(companies_df, report_id, report_name, gemini_api_key, utils.load_pe_firms()),
+        daemon=True
+    ).start()
 
+    logger.info('Analysis started for report ID: %s', report_id)
+    return {'message': 'File uploaded and analysis started! You can check the history for status.', 'report_id': report_id, 'report_name': report_name}
