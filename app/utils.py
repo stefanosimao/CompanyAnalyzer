@@ -187,6 +187,14 @@ def allowed_file(filename: str) -> bool:
         raise TypeError(f"filename must be a string, got {type(filename).__name__}")
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in config.ALLOWED_EXTENSIONS
 
+def load_public_asset_managers() -> list:
+    """
+    Load the list of public asset managers from public_asset_managers.json.
+    """
+    from . import config
+    data = load_json_file(config.PUBLIC_MANAGERS_FILE, default_value_func=lambda: {"managers": []})
+    return data.get("managers", [])
+
 def ensure_dirs() -> None:
     """
     Ensure necessary directories (upload and reports) exist.

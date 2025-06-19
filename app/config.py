@@ -16,6 +16,7 @@ SETTINGS_FILE = os.path.join(BASE_DIR, 'settings.json')
 HISTORY_FILE = os.path.join(BASE_DIR, 'history.json')
 PE_LIST_FILE = os.path.join(BASE_DIR, 'pe_firms.json')
 NATIONS_FILE = os.path.join(BASE_DIR, 'nations.json') 
+PUBLIC_MANAGERS_FILE = os.path.join(BASE_DIR, 'public_asset_managers.json')
 
 # --- Default Values / Constants ---
 # Allowed file extensions for uploads
@@ -109,3 +110,28 @@ def get_default_pe_firms():
         "SL Capital Partners", "Sofina", "SVG Capital", "Terra Firma Capital Partners",
         "Unbound Group", "Vitruvian Partners"
     ]
+
+def get_default_public_asset_managers():
+    """Returns a default list of public asset managers for the blocklist."""
+    return {
+        "managers": [
+            "BlackRock", "The Vanguard Group", "Vanguard Group", "Fidelity Investments", 
+            "State Street Global Advisors", "SSGA", "Morgan Stanley Investment Management", 
+            "J.P. Morgan Asset Management", "JPMorgan Chase", "Goldman Sachs Asset Management", 
+            "Goldman Sachs Group", "Capital Group", "The Capital Group Companies", 
+            "Capital International Investors", "Amundi", "Crédit Agricole", "UBS Asset Management", 
+            "UBS", "BNY Mellon Investment Management", "BNY Investments", "Allianz Global Investors", 
+            "Allianz Group", "PIMCO", "Deutsche Bank", "DWS Group", "Invesco", "Franklin Templeton", 
+            "Legal & General", "Northern Trust", "Prudential Financial", "T. Rowe Price", 
+            "T. Rowe Price Group", "BNP Paribas Asset Management", "Natixis Investment Managers", 
+            "Schroders", "Axa Investment Managers", "Generali Group", "Union Investment", "abrdn", 
+            "AllianceBernstein", "Allspring Global Investments", "American Century Investments", 
+            "Ameriprise Financial", "Bridgewater Associates", "Brookfield Asset Management", 
+            "Charles Schwab Investment Management", "Columbia Threadneedle Investments", 
+            "Dimensional Fund Advisors", "Dodge & Cox", "Eaton Vance", "Federated Hermes", 
+            "Fisher Investments", "Geode Capital Management", "Janus Henderson", "Loomis, Sayles & Company", 
+            "Lord, Abbett & Co.", "Manulife Investment Management", "MFS Investment Management", 
+            "Neuberger Berman", "Nuveen", "PGIM", "Pzena Investment Management", "Raymond James", 
+            "Russell Investments", "SEI Investments", "Waddell & Reed", "Wellington Management"
+        ]
+    }

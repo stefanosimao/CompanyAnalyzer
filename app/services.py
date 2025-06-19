@@ -6,10 +6,11 @@ from datetime import datetime
 from pathlib import Path
 from threading import Thread
 from typing import Any, Dict, List, Union
-from concurrent.futures import ThreadPoolExecutor, as_completed
 import pandas as pd
 from google import genai
 from google.genai import types
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from google.generativeai.types import BlockedPromptException
 
 from . import utils, config
 
@@ -71,76 +72,6 @@ def _extract_grounding(response: Any) -> List[Dict[str, str]]:
                         })
     return snippets
 
-def _verify_and_extract_pe_name(
-    owners_txt: str,
-    company_name: str,
-    gemini_api_key: str
-) -> Union[str, None]:
-    """
-    Makes a second, targeted call to Gemini to verify if a text describes a PE firm
-    and extract its proper name.
-    """
-    logger.info(f"Running verification step for potential PE ownership of {company_name}.")
-    prompt = (
-        "Based on the following text, answer two questions:\n\n"
-        f"Text: \"{owners_txt}\"\n\n"
-        "1. Is the primary owner mentioned in this text a Private Equity firm? (Answer only with 'Yes' or 'No').\n"
-        "2. If yes, what is the exact, full, proper name of that Private Equity firm? (If no, respond with 'N/A').\n\n"
-        "Example Response:\n"
-        "1. Yes\n"
-        "2. SK Capital Partners"
-    )
-
-    try:
-        client = _configure_genai(gemini_api_key)
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=prompt,
-        )
-        text = _extract_text(response)
-
-        is_pe_firm_match = re.search(r"1\.\s*Yes", text, re.IGNORECASE)
-        if is_pe_firm_match:
-            pe_name_match = re.search(r"2\.\s*(.+)", text)
-            if pe_name_match:
-                pe_name = pe_name_match.group(1).strip()
-                if pe_name.lower() != 'n/a':
-                    logger.info(f"Verification successful. Extracted PE Firm: {pe_name}")
-                    return pe_name
-    except Exception as e:
-        logger.error(f"Error during PE verification call: {e}")
-        
-    return None
-
-def _verify_public_private_status(
-    owners_txt: str,
-    company_name: str,
-    gemini_api_key: str
-) -> Union[str, None]:
-    """
-    Makes a targeted call to resolve ambiguity in the public/private status.
-    """
-    logger.info(f"Running verification for public/private status of {company_name}.")
-    prompt = (
-        "Based on the following ownership description, is the company Publicly Traded or Privately Held? "
-        "Answer only with the single word 'Public' or 'Private'.\n\n"
-        f"Ownership Description: \"{owners_txt}\""
-    )
-    try:
-        client = _configure_genai(gemini_api_key)
-        response = client.models.generate_content(
-            model="gemini-1.5-flash",
-            contents=prompt,
-        )
-        text = _extract_text(response).strip()
-        if text in ["Public", "Private"]:
-            logger.info(f"Status verification for {company_name} returned: {text}")
-            return text
-    except Exception as e:
-        logger.error(f"Error during status verification call: {e}")
-
-    return None
-
 def _extract_all_pe_firms_from_text(
     owners_txt: str,
     company_name: str,
@@ -174,27 +105,100 @@ def _extract_all_pe_firms_from_text(
         if text.lower() == 'n/a' or not text:
             return []
         
-                # Smartly rejoin suffixes like Inc., LLC, etc. that get split by commas.
         raw_names = [name.strip() for name in text.split(',')]
         corrected_names = []
         i = 0
         while i < len(raw_names):
             current_name = raw_names[i]
-            # Check if the next part is a common corporate suffix.
-            if i + 1 < len(raw_names) and raw_names[i+1].lower().replace('.', '') in ['inc', 'llc', 'lp', 'gmbh', 'sa', 'sas', 'ag']:
-                # Join it with the current name
+            if i + 1 < len(raw_names) and raw_names[i+1].lower().replace('.', '') in ['inc', 'llc', 'lp', 'gmbh', 'sa', 'sas', 'ag', 'md']:
                 corrected_names.append(f"{current_name}, {raw_names[i+1]}")
-                i += 2 # Skip the next element since we've consumed it
+                i += 2 
             else:
                 corrected_names.append(current_name)
                 i += 1
-
+        
         logger.info(f"Advanced extraction found PE firms: {corrected_names}")
         return corrected_names
 
     except Exception as e:
         logger.error(f"Error during advanced PE extraction call: {e}")
         return []
+
+
+def _verify_public_private_status(
+    owners_txt: str,
+    company_name: str,
+    gemini_api_key: str
+) -> Union[str, None]:
+    """
+    Makes a targeted call to resolve ambiguity in the public/private status.
+    """
+    logger.info(f"Running verification for public/private status of {company_name}.")
+    prompt = (
+        "Based on the following ownership description, is the company currently Publicly Traded or Privately Held? Only today's status! "
+        "Answer only with the single word 'Public' or 'Private'.\n\n"
+        f"Ownership Description: \"{owners_txt}\""
+    )
+    try:
+        client = _configure_genai(gemini_api_key)
+        response = client.models.generate_content(
+            model="gemini-1.5-flash",
+            contents=prompt,
+        )
+        text = _extract_text(response).strip()
+        if text in ["Public", "Private"]:
+            logger.info(f"Status verification for {company_name} returned: {text}")
+            return text
+    except Exception as e:
+        logger.error(f"Error during status verification call: {e}")
+
+    return None
+
+def _extract_nation_from_text(
+    full_text: str,
+    company_name: str,
+    gemini_api_key: str
+) -> Union[str, None]:
+    """
+    Makes a targeted call to extract the nation from a block of text.
+    """
+    logger.info(f"Running nation extraction for {company_name}.")
+    nations_list = utils.load_nations()
+    
+    # First, try a simple regex parse for speed
+    nation_match = re.search(r"nation \(headquarters\):\*\* (.*)", full_text, re.IGNORECASE)
+    if nation_match:
+        nation_text = nation_match.group(1).strip()
+        all_found = [country for country in nations_list if re.search(rf"\b{re.escape(country)}\b", nation_text, re.IGNORECASE)]
+        if len(all_found) == 1:
+            found_nation = all_found[0]
+            if found_nation.lower() in ["usa", "united states"]: return "USA"
+            if found_nation.lower() in ["uk", "united kingdom"]: return "UK"
+            return found_nation
+
+    # If regex fails or is ambiguous, use an AI call
+    logger.warning(f"Ambiguity in nation parsing for {company_name}. Using verification call.")
+    prompt = (
+        "Based on the following text, what is the single headquarters country for the company "
+        f"'{company_name}'? Answer with only the country's name (e.g., 'USA', 'Switzerland'). "
+        "If no country is clearly identified, answer 'Unknown'.\n\n"
+        f"Text: \"{full_text}\""
+    )
+    try:
+        client = _configure_genai(gemini_api_key)
+        response = client.models.generate_content(
+            model="gemini-1.5-flash",
+            contents=prompt,
+        )
+        text = _extract_text(response).strip()
+        if text and len(text.split()) < 4:
+            logger.info(f"Nation extraction for {company_name} returned: {text}")
+            return text
+    except Exception as e:
+        logger.error(f"Error during nation extraction call: {e}")
+
+    return None
+
 
 def analyze_company(
     company_name: str,
@@ -205,7 +209,7 @@ def analyze_company(
     Analyze a company via Gemini: public/private status, ownership, financials, etc.
     """
     logger.info('Initiating analysis for company: %s', company_name)
-    nations_list = utils.load_nations()
+    public_managers_list = [name.lower() for name in utils.load_public_asset_managers()]
     data = {
         'company_name': company_name,
         'ownership_structure': 'N/A',
@@ -223,8 +227,6 @@ def analyze_company(
         client = _configure_genai(gemini_api_key)
         config = _init_config()
 
-        # --- ADVANCED PROMPT ENGINEERING ---
-        # Added a high-quality "few-shot" example and a strict constraint.
         prompt = (
             f"Please find comprehensive information for the company '{company_name}'. "
             "Specifically, identify the following details:\n"
@@ -243,6 +245,7 @@ def analyze_company(
             "--- Example End ---"
         )
 
+
         response = client.models.generate_content(
             model="gemini-2.5-flash",
             contents=prompt,
@@ -257,76 +260,51 @@ def analyze_company(
             return data
 
         data['source_snippets'] = _extract_grounding(response)
-        text_lower = text.lower()
         
-        # --- PARSING LOGIC ---
-        if "public/private ownership:** public" in text_lower or "publicly traded" in text_lower:
-            data["public_private"] = "Public"
-        elif "public/private ownership:** private" in text_lower or "privately owned" in text_lower:
-            data["public_private"] = "Private"
-
+        # --- AI-POWERED PARSING & VALIDATION ---
+        
+        # 1. Extract Ownership Text
         owner_match = re.search(r"ownership structure:\*\*(.*?)(?:\n\d|\n\n|$)", text, re.DOTALL | re.IGNORECASE)
-        owners_txt = text
-        if owner_match:
-            owners_txt = owner_match.group(1).strip()
-            data["ownership_structure"] = owners_txt
-        else:
-            data["ownership_structure"] = "Not found in structured format. Full text used for analysis."
-        
-        extracted_pe_firms = _extract_all_pe_firms_from_text(owners_txt, company_name, gemini_api_key)
-        
-        if extracted_pe_firms:
-            data["is_pe_owned"] = True
-            data["pe_owner_names"] = extracted_pe_firms
-            # Now, update the main PE list with any newly discovered firms
-            for pe_firm in extracted_pe_firms:
-                is_already_known = any(pe_firm.lower() == known_firm.lower() for known_firm in pe_firms_list)
-                if not is_already_known:
-                    logger.info(f"Discovered and verified new PE firm: {pe_firm}. Adding to list.")
-                    pe_firms_list.append(pe_firm)
-                    utils.save_pe_firms(pe_firms_list)
-        
-        if re.search(r"self-identification as pe:\*\* yes", text_lower):
+        owners_txt = text if not owner_match else owner_match.group(1).strip()
+        data["ownership_structure"] = owners_txt
+
+        # 2. Verify Public/Private Status using the ownership text
+        verified_status = _verify_public_private_status(owners_txt, company_name, gemini_api_key)
+        if verified_status:
+            data["public_private"] = verified_status
+        else: # Fallback to parsing the full text if verification fails
+            if "publicly traded" in text.lower(): data["public_private"] = "Public"
+            elif "privately owned" in text.lower(): data["public_private"] = "Private"
+
+        # 3. If verified as Private, extract PE firms
+        if data["public_private"] == "Private":
+            extracted_pe_firms = _extract_all_pe_firms_from_text(owners_txt, company_name, gemini_api_key)
+            # Filter out public asset managers from the extracted list
+            true_pe_owners = [firm for firm in extracted_pe_firms if firm.lower() not in public_managers_list]
+            
+            if true_pe_owners:
+                data["is_pe_owned"] = True
+                data["pe_owner_names"] = true_pe_owners
+                # Add any newly discovered true PE firms to the master list
+                for pe_firm in true_pe_owners:
+                    is_already_known = any(pe_firm.lower() == known_firm.lower() for known_firm in pe_firms_list)
+                    if not is_already_known:
+                        logger.info(f"Discovered and verified new PE firm: {pe_firm}. Adding to list.")
+                        pe_firms_list.append(pe_firm)
+                        utils.save_pe_firms(pe_firms_list)
+
+        # 4. Final check for self-identification as PE
+        if re.search(r"self-identification as pe:\*\* yes", text.lower()):
             data['is_itself_pe'] = True
 
-        nation_match = re.search(r"nation \(headquarters\):\*\* (.*)", text, re.IGNORECASE)
-        if nation_match:
-            data["nation"] = nation_match.group(1).strip()
-
-        if nation_match:
-            nation_text = nation_match.group(1).strip()
-            found_nation = "Unknown"
-            for country in nations_list: # Use the loaded list
-                if re.search(rf"\b{re.escape(country)}\b", nation_text, re.IGNORECASE):
-                    found_nation = country
-                    if country.lower() in ["usa", "united states"]: found_nation = "USA"
-                    if country.lower() in ["uk", "united kingdom"]: found_nation = "UK"
-                    break 
-            data["nation"] = found_nation
-
-        # --- HEURISTIC AND AI-POWERED VALIDATION ---
-        # Rule 1: A company cannot be both a PE firm and publicly traded.
-        if data['is_itself_pe'] and data['public_private'] == 'Public':
-            logger.warning(f"Validation failed for {company_name}: Flagged as PE but also Public. Re-classifying as not a PE firm.")
-            data['is_itself_pe'] = False
-
-        # Rule 2: If a company is owned by a PE firm, it must be Private.
-        if data["is_pe_owned"] and data["public_private"] != 'Private':
-            logger.warning(f"Validation failed for {company_name}: Flagged as PE-owned but not Public. Correcting status to Private.")
-            data["public_private"] = "Private"
+        # 5. Extract Nation using the optimized method
+        data['nation'] = _extract_nation_from_text(text, company_name, gemini_api_key) or 'Unknown'
         
-        # Rule 3: AI-powered verification for ambiguous public/private status.
-        elif data["public_private"] == 'Public' and not data['is_pe_owned'] and any(keyword in data["ownership_structure"].lower() for keyword in ["foundation", "family", "private investor", "privately owned"]):
-             logger.warning(f"Ambiguity detected for {company_name}. Marked Public but ownership text suggests private. Starting verification call.")
-             verified_status = _verify_public_private_status(data["ownership_structure"], company_name, gemini_api_key)
-             if verified_status:
-                data["public_private"] = verified_status
-
-        # Rule 4: If a company is PE-owned, it should be flagged.
+        # 6. Final flag setting
         if data["is_pe_owned"]:
             data["flagged_as_pe_account"] = True
 
-    except types.generation_types.BlockedPromptException as e:
+    except BlockedPromptException as e:
         reason = e.response.prompt_feedback.block_reason.name
         logger.error("Gemini API blocked prompt for %s: %s", company_name, reason)
         data['error'] = f"Gemini API blocked prompt: {reason}"
@@ -362,6 +340,7 @@ def research_pe_portfolio(pe_name: str, gemini_api_key: str) -> Dict[str, Union[
             f"--- Example End ---\n\n"
             f"If no portfolio companies are found, state 'No recent portfolio companies found'."
         )
+
         response = client.models.generate_content(
             model="gemini-2.5-flash",
             contents=prompt,
@@ -374,11 +353,11 @@ def research_pe_portfolio(pe_name: str, gemini_api_key: str) -> Dict[str, Union[
             result['error'] = msg
             return result
 
-        profile_match = re.search(r"profile summary:(.*?)(?=portfolio companies:|$)", text, re.DOTALL | re.IGNORECASE)
+        profile_match = re.search(r"profile summary:\*\*(.*?)(?=\*\*portfolio companies:\*\*|$)", text, re.DOTALL | re.IGNORECASE)
         if profile_match:
             result['profile_summary'] = profile_match.group(1).strip()
 
-        portfolio_section_match = re.search(r"portfolio companies:(.*)", text, re.DOTALL | re.IGNORECASE)
+        portfolio_section_match = re.search(r"portfolio companies:\*\*(.*)", text, re.DOTALL | re.IGNORECASE)
         if portfolio_section_match:
             portfolio_text = portfolio_section_match.group(1).strip()
             company_pattern = re.compile(r"^\s*\d+\.\s*(.*?)\s\((.*?),\s*(.*?)\)", re.MULTILINE)
@@ -389,13 +368,14 @@ def research_pe_portfolio(pe_name: str, gemini_api_key: str) -> Dict[str, Union[
                     "industry": match.group(3).strip()
                 })
 
-    except genai.types.BlockedPromptException as e:
+    except BlockedPromptException as e:
         reason = e.response.prompt_feedback.block_reason.name
         logger.error("Gemini API blocked prompt for PE firm %s: %s", pe_name, reason)
         result['error'] = f"Gemini API blocked prompt for PE portfolio: {reason}"
     except Exception:
         logger.exception("Error researching %s with Gemini", pe_name)
         result['error'] = 'An unexpected error occurred during PE research.'
+
 
     logger.info('Finished PE research for %s. Portfolio found: %d', pe_name, len(result['portfolio_companies']))
     return result
@@ -414,8 +394,7 @@ def _background_worker(
     
     company_names = [str(name).strip() for name in companies['Company Name'].dropna() if name]
 
-    with ThreadPoolExecutor(max_workers=500) as executor:
-        # Create a future for each company analysis
+    with ThreadPoolExecutor(max_workers=5) as executor:
         future_to_company = {executor.submit(analyze_company, name, gemini_api_key, pe_firms_list): name for name in company_names}
         
         for future in as_completed(future_to_company):
@@ -432,9 +411,8 @@ def _background_worker(
                     'error': f'An exception occurred: {exc}'
                 })
     
-    # The secondary research on PE firms can also be parallelized
     pe_firms_insights = {}
-    with ThreadPoolExecutor(max_workers=50) as executor:
+    with ThreadPoolExecutor(max_workers=5) as executor:
         future_to_pe = {executor.submit(research_pe_portfolio, pe_name, gemini_api_key): pe_name for pe_name in unique_pe}
         for future in as_completed(future_to_pe):
             pe_name = future_to_pe[future]

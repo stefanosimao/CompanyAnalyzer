@@ -16,7 +16,6 @@ function HistorySection({ showAlert, navigateTo }) {
     try {
       const response = await fetch('/history'); // GET request to Flask backend
       const data = await response.json();
-
       if (response.ok) {
         setHistory(data); // Update history state with fetched data
       } else {
