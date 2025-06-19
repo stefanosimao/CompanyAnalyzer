@@ -156,6 +156,19 @@ def save_pe_firms(pe_firms: Any) -> None:
     save_json_file(config.PE_LIST_FILE, pe_firms)
     logging.info("Private equity firms list updated.")
 
+def load_nations() -> list:
+    """
+    Load the list of nations from nations.json.
+
+    Returns:
+        The loaded nations list, or an empty list if file is missing or corrupt.
+    """
+    from . import config
+    # The default function here is set to None, assuming nations.json will be created manually.
+    # For a truly robust system, you could define a get_default_nations in config.py.
+    data = load_json_file(config.NATIONS_FILE, default_value_func=lambda: {"nations": []})
+    return data.get("nations", [])
+
 def allowed_file(filename: str) -> bool:
     """
     Check if the uploaded file has an allowed extension.

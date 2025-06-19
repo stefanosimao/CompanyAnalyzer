@@ -102,6 +102,7 @@ function App() {
           {activeSection === 'peInsights' && currentPEFirm && (
             <PEInsightsSection
               peFirmName={currentPEFirm}
+              reportId={currentReportId}
               showAlert={showAlert}
               navigateTo={navigateTo}
             />

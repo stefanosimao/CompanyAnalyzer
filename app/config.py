@@ -15,6 +15,7 @@ STATIC_FOLDER = os.path.join(BASE_DIR, 'static')
 SETTINGS_FILE = os.path.join(BASE_DIR, 'settings.json')
 HISTORY_FILE = os.path.join(BASE_DIR, 'history.json')
 PE_LIST_FILE = os.path.join(BASE_DIR, 'pe_firms.json')
+NATIONS_FILE = os.path.join(BASE_DIR, 'nations.json') 
 
 # --- Default Values / Constants ---
 # Allowed file extensions for uploads

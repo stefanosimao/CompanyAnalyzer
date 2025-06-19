@@ -1,7 +1,6 @@
 # Local application settings and data
 settings.json
 history.json
-pe_firms.json
 uploads/
 reports/
 requirements.txt

@@ -42,7 +42,7 @@ function HistorySection({ showAlert, navigateTo }) {
       if (pollingIntervalId) {
         clearInterval(pollingIntervalId);
         setPollingIntervalId(null);
-        logging.info("Cleared polling interval: No pending reports.");
+        console.log("Cleared polling interval: No pending reports.");
       }
     }
   };
@@ -61,7 +61,7 @@ function HistorySection({ showAlert, navigateTo }) {
     return () => {
       if (id) {
         clearInterval(id); // Clear the interval to prevent memory leaks
-        logging.info("Cleared polling interval on unmount.");
+        console.log("Cleared polling interval on unmount.");
       }
     };
   }, [showAlert]); // Dependency array: re-run effect if showAlert changes

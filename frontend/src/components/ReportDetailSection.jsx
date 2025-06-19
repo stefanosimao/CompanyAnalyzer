@@ -25,6 +25,19 @@ function ReportDetailSection({ reportId, showAlert, navigateTo }) {
   const charts = useRef({});
 
   // --- Utility Functions for Data Processing ---
+    
+  // Helper to format duration for display
+  const formatDuration = (seconds) => {
+    if (typeof seconds !== 'number' || isNaN(seconds)) {
+      return 'N/A';
+    }
+    const minutes = Math.floor(seconds / 60);
+    const remainingSeconds = Math.round(seconds % 60);
+    if (minutes > 0) {
+      return `${minutes}m ${remainingSeconds}s`;
+    }
+    return `${remainingSeconds}s`;
+  };
 
   // Calculates summary statistics from the raw company data
   const calculateSummary = (companies) => {
@@ -302,19 +315,19 @@ function ReportDetailSection({ reportId, showAlert, navigateTo }) {
             </p>
           </div>
           <div className="bg-blue-50 p-4 rounded-lg shadow-sm">
-            <p class="text-sm text-gray-600">PE Owned Companies</p>
+            <p className="text-sm text-gray-600">PE Owned Companies</p>
             <p id="summary-pe-owned" className="text-2xl font-bold text-blue-800">
                 {summary.peOwned} ({totalCompanies > 0 ? ((summary.peOwned / totalCompanies) * 100).toFixed(1) : 0}%)
             </p>
           </div>
           <div className="bg-blue-50 p-4 rounded-lg shadow-sm">
-            <p class="text-sm text-gray-600">Public Companies</p>
+            <p className="text-sm text-gray-600">Public Companies</p>
             <p id="summary-public" className="text-2xl font-bold text-blue-800">
                 {summary.public} ({totalCompanies > 0 ? ((summary.public / totalCompanies) * 100).toFixed(1) : 0}%)
             </p>
           </div>
           <div className="bg-blue-50 p-4 rounded-lg shadow-sm">
-            <p class="text-sm text-gray-600">Private Companies</p>
+            <p className="text-sm text-gray-600">Private Companies</p>
             <p id="summary-private" className="text-2xl font-bold text-blue-800">
                 {summary.private} ({totalCompanies > 0 ? ((summary.private / totalCompanies) * 100).toFixed(1) : 0}%)
             </p>
@@ -437,4 +450,3 @@ function ReportDetailSection({ reportId, showAlert, navigateTo }) {
 }
 
 export default ReportDetailSection;
-
