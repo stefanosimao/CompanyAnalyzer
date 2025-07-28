@@ -10,60 +10,52 @@ import {
   Tooltip,
   Legend,
   ResponsiveContainer,
-  Treemap,
 } from "recharts";
 import { format, parseISO } from "date-fns";
 
-// --- Reusable Components for Modern UI ---
+// --- Reusable Component ---
 const Card = ({ children, className = "" }) => (
   <div
-    className={`bg-card text-card-foreground p-6 rounded-lg border border-border shadow-sm ${className}`}
+    className={`bg-white text-gray-800 p-6 rounded-lg border border-gray-200 shadow-sm ${className}`}
   >
     {children}
   </div>
 );
 
-const StatCard = ({ title, value, icon }) => (
-  <Card className="flex flex-col justify-between">
-    <div>
-      <div className="flex items-center justify-between text-muted-foreground">
-        <p className="text-sm font-medium">{title}</p>
-        <i className={`ph-fill ph-${icon} text-lg`}></i>
-      </div>
-      <p className="text-3xl font-bold mt-1 text-foreground">{value}</p>
-    </div>
-  </Card>
-);
-
 // Custom Tooltip for Recharts
-const CustomTooltip = ({ active, payload, label }) => {
+const CustomTooltip = ({ active, payload }) => {
   if (active && payload && payload.length) {
     return (
-      <div className="p-2 bg-background/80 backdrop-blur-sm border border-border rounded-lg shadow-lg">
-        <p className="label font-bold">{`${label} : ${payload[0].value}`}</p>
+      <div className="p-2 bg-white/80 backdrop-blur-sm border border-gray-200 rounded-lg shadow-lg">
+        <p className="label font-bold text-gray-700">{`${payload[0].name} : ${payload[0].value}`}</p>
       </div>
     );
   }
   return null;
 };
 
+// Colors for our charts
+const COLORS = [
+  "#2563eb",
+  "#16a34a",
+  "#ea580c",
+  "#64748b",
+  "#9333ea",
+  "#fde047",
+];
+
 // --- Main Report Detail Component ---
 function ReportDetailSection({ reportId, showAlert, navigateTo }) {
   const [reportData, setReportData] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
-  const [sortConfig, setSortConfig] = useState({
-    key: "company_name",
-    direction: "ascending",
-  });
 
   const formatDuration = (seconds) => {
     if (typeof seconds !== "number" || isNaN(seconds)) return "N/A";
     const minutes = Math.floor(seconds / 60);
     const remainingSeconds = Math.round(seconds % 60);
-    return minutes > 0
-      ? `${minutes}m ${remainingSeconds}s`
-      : `${remainingSeconds}s`;
+    if (minutes > 0) return `~${minutes}m ${remainingSeconds}s`;
+    return `${remainingSeconds}s`;
   };
 
   useEffect(() => {
@@ -89,125 +81,122 @@ function ReportDetailSection({ reportId, showAlert, navigateTo }) {
     fetchReport();
   }, [reportId, showAlert, navigateTo]);
 
-  const { summary, filteredAndSortedCompanies } = useMemo(() => {
-    if (!reportData?.data)
-      return { summary: {}, filteredAndSortedCompanies: [] };
+  const { summary, filteredCompanies } = useMemo(() => {
+    if (!reportData?.data) return { summary: {}, filteredCompanies: [] };
 
-    // --- Data Calculation ---
     const companies = reportData.data;
-    const total = companies.length;
-    const peOwned = companies.filter((c) => c.is_pe_owned).length;
-    const ownershipDistribution = companies.reduce((acc, c) => {
-      const type = c.public_private || "Unknown";
+    const categoryDistribution = companies.reduce((acc, c) => {
+      const type = c.ownership_category || "Unknown";
       acc[type] = (acc[type] || 0) + 1;
       return acc;
     }, {});
+
+    const peRelatedCount =
+      (categoryDistribution["PE-Owned"] || 0) +
+      (categoryDistribution["Public (PE-Backed)"] || 0);
+
     const nations = companies.reduce((acc, c) => {
       if (c.nation && c.nation !== "Unknown")
         acc[c.nation] = (acc[c.nation] || 0) + 1;
       return acc;
     }, {});
-    const peOwners = companies.reduce((acc, c) => {
-      if (c.is_pe_owned && c.pe_owner_names)
-        c.pe_owner_names.forEach(
-          (owner) => (acc[owner] = (acc[owner] || 0) + 1)
-        );
-      return acc;
-    }, {});
 
     const summaryData = {
-      total,
-      peOwned,
-      ownershipData: Object.entries(ownershipDistribution).map(
+      total: companies.length,
+      peRelatedCount,
+      categoryData: Object.entries(categoryDistribution).map(
         ([name, value]) => ({ name, value })
       ),
       nationData: Object.entries(nations)
         .map(([name, count]) => ({ name, count }))
         .sort((a, b) => b.count - a.count)
         .slice(0, 10),
-      peOwnerData: Object.entries(peOwners).map(([name, size]) => ({
-        name,
-        size,
-      })),
     };
 
-    // --- Filtering and Sorting ---
     let processedCompanies = [...reportData.data];
     if (searchTerm) {
       processedCompanies = processedCompanies.filter((c) =>
         c.company_name.toLowerCase().includes(searchTerm.toLowerCase())
       );
     }
-    processedCompanies.sort((a, b) => {
-      if (a[sortConfig.key] < b[sortConfig.key])
-        return sortConfig.direction === "ascending" ? -1 : 1;
-      if (a[sortConfig.key] > b[sortConfig.key])
-        return sortConfig.direction === "ascending" ? 1 : -1;
-      return 0;
-    });
 
-    return {
-      summary: summaryData,
-      filteredAndSortedCompanies: processedCompanies,
-    };
-  }, [reportData, searchTerm, sortConfig]);
+    return { summary: summaryData, filteredCompanies: processedCompanies };
+  }, [reportData, searchTerm]);
 
   if (isLoading)
     return (
       <div className="text-center py-8">
-        <i className="ph-fill ph-spinner-gap animate-spin text-4xl text-primary"></i>
+        <i className="ph-fill ph-spinner-gap animate-spin text-4xl text-blue-600"></i>
       </div>
     );
-  if (!reportData) return <p className="text-destructive">Report not found.</p>;
+  if (!reportData) return <p className="text-red-600">Report not found.</p>;
 
   return (
     <section className="space-y-8 animate-fade-in">
       {/* Header */}
       <div>
         <button
-          className="text-primary font-semibold flex items-center mb-4"
+          className="text-blue-600 font-semibold flex items-center mb-4"
           onClick={() => navigateTo("history")}
         >
           <i className="ph-fill ph-arrow-left mr-2"></i> Back to History
         </button>
-        <h2 className="text-3xl font-bold text-foreground">
+        <h2 className="text-3xl font-bold text-gray-800">
           {reportData.report_name}
         </h2>
-        <p className="text-muted-foreground">
+        <p className="text-gray-500">
           Analysis completed on{" "}
-          {format(parseISO(reportData.analysis_end_time), "MMM dd, yyyy")}
+          {reportData.analysis_end_time
+            ? format(parseISO(reportData.analysis_end_time), "MMM dd, yyyy")
+            : "N/A"}
         </p>
       </div>
 
-      {/* Summary Stat Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        <StatCard
-          title="Total Companies"
-          value={summary.total}
-          icon="buildings"
-        />
-        <StatCard
-          title="PE Owned"
-          value={summary.peOwned}
-          icon="briefcase-metal"
-        />
-        <StatCard
-          title="Analysis Duration"
-          value={formatDuration(reportData.analysis_duration_seconds)}
-          icon="timer"
-        />
-      </div>
+      {/* ** NEW **: Executive Summary Section */}
+      <Card>
+        <h3 className="text-xl font-semibold mb-4 text-gray-800">
+          Executive Summary
+        </h3>
+        <div className="flex flex-col md:flex-row md:items-center gap-8">
+          <div className="text-center">
+            <p className="text-sm text-gray-500">
+              Companies with Private Equities Involvement:{" "}
+              <strong lassName="font-semibold text-blue-600">
+                {summary.peRelatedCount}
+              </strong>
+            </p>
+          </div>
+          <div className="border-l border-gray-200 pl-8">
+            <p className="text-gray-700 mb-2">
+              This report analyzed{" "}
+              <strong className="font-semibold">{summary.total}</strong>{" "}
+              companies and found that{" "}
+              <strong className="font-semibold">
+                {((summary.peRelatedCount / summary.total) * 100).toFixed(0)}%
+              </strong>{" "}
+              have direct private equity ownership or backing.
+            </p>
+            <p className="text-sm text-gray-500">
+              The full analysis was completed in{" "}
+              <strong className="font-semibold">
+                {formatDuration(reportData.analysis_duration_seconds)}
+              </strong>
+              .
+            </p>
+          </div>
+        </div>
+      </Card>
 
       {/* Charts Section */}
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
         <Card className="lg:col-span-2">
-          <h3 className="font-semibold mb-4 text-foreground">
-            Ownership Distribution
+          <h3 className="font-semibold mb-4 text-gray-800">
+            Ownership Category
           </h3>
           <ResponsiveContainer width="100%" height={300}>
             <PieChart>
               <Pie
-                data={summary.ownershipData}
+                data={summary.categoryData}
                 dataKey="value"
                 nameKey="name"
                 cx="50%"
@@ -215,21 +204,21 @@ function ReportDetailSection({ reportId, showAlert, navigateTo }) {
                 innerRadius={60}
                 outerRadius={100}
                 paddingAngle={5}
-                labelLine={false}
-                label={({ name, percent }) =>
-                  `${name} ${(percent * 100).toFixed(0)}%`
-                }
               >
-                <Cell key="cell-0" fill="#2563eb" />
-                <Cell key="cell-1" fill="#ea580c" />
-                <Cell key="cell-2" fill="#64748b" />
+                {summary.categoryData.map((entry, index) => (
+                  <Cell
+                    key={`cell-${index}`}
+                    fill={COLORS[index % COLORS.length]}
+                  />
+                ))}
               </Pie>
               <Tooltip content={<CustomTooltip />} />
+              <Legend />
             </PieChart>
           </ResponsiveContainer>
         </Card>
         <Card className="lg:col-span-3">
-          <h3 className="font-semibold mb-4 text-foreground">Top 10 Nations</h3>
+          <h3 className="font-semibold mb-4 text-gray-800">Top 10 Nations</h3>
           <ResponsiveContainer width="100%" height={300}>
             <BarChart
               data={summary.nationData}
@@ -247,88 +236,66 @@ function ReportDetailSection({ reportId, showAlert, navigateTo }) {
         </Card>
       </div>
 
-      {/* Treemap for PE owners */}
-      {summary.peOwnerData?.length > 0 && (
-        <Card>
-          <h3 className="font-semibold mb-4 text-foreground">
-            PE Firm Portfolio Size
-          </h3>
-          <ResponsiveContainer width="100%" height={400}>
-            <Treemap
-              data={summary.peOwnerData}
-              dataKey="size"
-              ratio={4 / 3}
-              stroke="#fff"
-              fill="#4f46e5"
-              content={
-                <CustomizedContent
-                  colors={["#6366f1", "#818cf8", "#a5b4fc", "#c7d2fe"]}
-                />
-              }
-            />
-          </ResponsiveContainer>
-        </Card>
-      )}
-
-      {/* Detailed Company List */}
+      {/* ** RESTORED **: Detailed Company List */}
       <Card>
-        <h3 className="text-xl font-semibold mb-4 text-foreground">
+        <h3 className="text-xl font-semibold mb-4 text-gray-800">
           Detailed Company Data
         </h3>
         <input
           type="text"
           placeholder="Search companies in this report..."
-          className="w-full mb-4 px-4 py-2 border rounded-lg bg-background"
+          className="w-full mb-4 px-4 py-2 border rounded-lg bg-gray-50"
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}
         />
         <div className="space-y-4">
-          {filteredAndSortedCompanies.map((company) => (
+          {filteredCompanies.map((company) => (
             <div
               key={company.company_name}
-              className="p-4 border rounded-lg bg-secondary/50"
+              className="p-4 border rounded-lg bg-gray-50/50"
             >
-              <h4 className="text-lg font-bold text-primary">
+              <h4 className="text-lg font-bold text-blue-600">
                 {company.company_name}
               </h4>
               <div className="mt-2 text-sm space-y-2">
                 <p>
-                  <strong className="font-semibold text-foreground">
-                    Status:
-                  </strong>{" "}
-                  {company.public_private}
-                </p>
-                <p>
-                  <strong className="font-semibold text-foreground">
-                    PE Owned:
+                  <strong className="font-semibold text-gray-700">
+                    Category:
                   </strong>{" "}
                   <span
                     className={
                       company.is_pe_owned ? "text-green-600 font-bold" : ""
                     }
                   >
-                    {company.is_pe_owned ? "Yes" : "No"}
+                    {company.ownership_category || "N/A"}
                   </span>
                 </p>
                 <p>
-                  <strong className="font-semibold text-foreground">
+                  <strong className="font-semibold text-gray-700">
+                    Status:
+                  </strong>{" "}
+                  {company.public_private}
+                </p>
+                <p>
+                  <strong className="font-semibold text-gray-700">
                     Nation:
                   </strong>{" "}
                   {company.nation}
                 </p>
-                {company.pe_owner_names.length > 0 && (
-                  <p>
-                    <strong className="font-semibold text-foreground">
-                      PE Owners:
-                    </strong>{" "}
-                    {company.pe_owner_names.join(", ")}
-                  </p>
-                )}
-                <p className="pt-2 border-t border-border/50">
-                  <strong className="font-semibold text-foreground">
-                    Ownership Details:
+                {company.pe_owner_names &&
+                  company.pe_owner_names.length > 0 && (
+                    <p>
+                      <strong className="font-semibold text-gray-700">
+                        PE Owners:
+                      </strong>{" "}
+                      {company.pe_owner_names.join(", ")}
+                    </p>
+                  )}
+                <p className="pt-2 border-t border-gray-200/50">
+                  <strong className="font-semibold text-gray-700">
+                    Ownership Summary:
                   </strong>{" "}
-                  <span className="text-muted-foreground">
+                  <span className="text-gray-500">
                     {company.ownership_structure}
                   </span>
                 </p>
@@ -340,45 +307,5 @@ function ReportDetailSection({ reportId, showAlert, navigateTo }) {
     </section>
   );
 }
-
-// Helper for the Treemap colors
-const CustomizedContent = ({
-  root,
-  depth,
-  x,
-  y,
-  width,
-  height,
-  index,
-  colors,
-  name,
-}) => {
-  return (
-    <g>
-      <rect
-        x={x}
-        y={y}
-        width={width}
-        height={height}
-        style={{
-          fill: colors[
-            Math.floor((index / root.children.length) * colors.length)
-          ],
-          stroke: "#fff",
-          strokeWidth: 2,
-        }}
-      />
-      <text
-        x={x + width / 2}
-        y={y + height / 2 + 7}
-        textAnchor="middle"
-        fill="#fff"
-        fontSize={14}
-      >
-        {name}
-      </text>
-    </g>
-  );
-};
 
 export default ReportDetailSection;
