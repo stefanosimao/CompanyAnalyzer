@@ -49,6 +49,7 @@ function ReportDetailSection({ reportId, showAlert, navigateTo }) {
   const [reportData, setReportData] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
+  const [activeFilters, setActiveFilters] = useState([]);
 
   const formatDuration = (seconds) => {
     if (typeof seconds !== "number" || isNaN(seconds)) return "N/A";
@@ -119,9 +120,29 @@ function ReportDetailSection({ reportId, showAlert, navigateTo }) {
         c.company_name.toLowerCase().includes(searchTerm.toLowerCase())
       );
     }
+    activeFilters.forEach((filter) => {
+      processedCompanies = processedCompanies.filter(
+        (c) => c[filter.type] === filter.value
+      );
+    });
 
     return { summary: summaryData, filteredCompanies: processedCompanies };
-  }, [reportData, searchTerm]);
+  }, [reportData, searchTerm, activeFilters]);
+
+  const addFilter = (type, value) => {
+    if (!activeFilters.some((f) => f.type === type && f.value === value)) {
+      setActiveFilters([...activeFilters, { type, value }]);
+    }
+  };
+
+  const removeFilter = (filterToRemove) => {
+    setActiveFilters(
+      activeFilters.filter(
+        (f) =>
+          !(f.type === filterToRemove.type && f.value === filterToRemove.value)
+      )
+    );
+  };
 
   if (isLoading)
     return (
@@ -152,7 +173,7 @@ function ReportDetailSection({ reportId, showAlert, navigateTo }) {
         </p>
       </div>
 
-      {/* ** NEW **: Executive Summary Section */}
+      {/* Executive Summary Section (Unchanged, as requested) */}
       <Card>
         <h3 className="text-xl font-semibold mb-4 text-gray-800">
           Executive Summary
@@ -161,7 +182,7 @@ function ReportDetailSection({ reportId, showAlert, navigateTo }) {
           <div className="text-center">
             <p className="text-sm text-gray-500">
               Companies with Private Equities Involvement:{" "}
-              <strong lassName="font-semibold text-blue-600">
+              <strong className="font-semibold text-blue-600">
                 {summary.peRelatedCount}
               </strong>
             </p>
@@ -187,8 +208,8 @@ function ReportDetailSection({ reportId, showAlert, navigateTo }) {
         </div>
       </Card>
 
-      {/* Charts Section */}
-      <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
+      {/* ** FIX **: Updated grid layout for charts */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6">
         <Card className="lg:col-span-2">
           <h3 className="font-semibold mb-4 text-gray-800">
             Ownership Category
@@ -204,11 +225,13 @@ function ReportDetailSection({ reportId, showAlert, navigateTo }) {
                 innerRadius={60}
                 outerRadius={100}
                 paddingAngle={5}
+                onClick={(data) => addFilter("ownership_category", data.name)}
               >
                 {summary.categoryData.map((entry, index) => (
                   <Cell
                     key={`cell-${index}`}
                     fill={COLORS[index % COLORS.length]}
+                    className="cursor-pointer"
                   />
                 ))}
               </Pie>
@@ -230,78 +253,113 @@ function ReportDetailSection({ reportId, showAlert, navigateTo }) {
                 content={<CustomTooltip />}
                 cursor={{ fill: "rgba(238, 242, 255, 0.5)" }}
               />
-              <Bar dataKey="count" fill="#16a34a" radius={[4, 4, 0, 0]} />
+              <Bar
+                dataKey="count"
+                fill="#16a34a"
+                radius={[4, 4, 0, 0]}
+                onClick={(data) => addFilter("nation", data.name)}
+                className="cursor-pointer"
+              />
             </BarChart>
           </ResponsiveContainer>
         </Card>
       </div>
 
-      {/* ** RESTORED **: Detailed Company List */}
+      {/* Detailed Company List */}
       <Card>
-        <h3 className="text-xl font-semibold mb-4 text-gray-800">
-          Detailed Company Data
-        </h3>
-        <input
-          type="text"
-          placeholder="Search companies in this report..."
-          className="w-full mb-4 px-4 py-2 border rounded-lg bg-gray-50"
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-        />
-        <div className="space-y-4">
-          {filteredCompanies.map((company) => (
-            <div
-              key={company.company_name}
-              className="p-4 border rounded-lg bg-gray-50/50"
-            >
-              <h4 className="text-lg font-bold text-blue-600">
-                {company.company_name}
-              </h4>
-              <div className="mt-2 text-sm space-y-2">
-                <p>
-                  <strong className="font-semibold text-gray-700">
-                    Category:
-                  </strong>{" "}
-                  <span
-                    className={
-                      company.is_pe_owned ? "text-green-600 font-bold" : ""
-                    }
+        <div className="flex flex-col md:flex-row gap-4 mb-4">
+          <input
+            type="text"
+            placeholder="Search companies in this report..."
+            className="w-full px-4 py-2 border rounded-lg bg-gray-50"
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+          />
+          {activeFilters.length > 0 && (
+            <div className="flex items-center gap-2 flex-wrap">
+              {activeFilters.map((filter) => (
+                <div
+                  key={`${filter.type}-${filter.value}`}
+                  className="flex items-center gap-1 bg-gray-200 px-2 py-1 rounded"
+                >
+                  <span className="text-sm">{filter.value}</span>
+                  <button
+                    onClick={() => removeFilter(filter)}
+                    className="text-gray-500 hover:text-red-500"
                   >
-                    {company.ownership_category || "N/A"}
-                  </span>
-                </p>
-                <p>
-                  <strong className="font-semibold text-gray-700">
-                    Status:
-                  </strong>{" "}
-                  {company.public_private}
-                </p>
-                <p>
-                  <strong className="font-semibold text-gray-700">
-                    Nation:
-                  </strong>{" "}
-                  {company.nation}
-                </p>
-                {company.pe_owner_names &&
-                  company.pe_owner_names.length > 0 && (
-                    <p>
-                      <strong className="font-semibold text-gray-700">
-                        PE Owners:
-                      </strong>{" "}
-                      {company.pe_owner_names.join(", ")}
-                    </p>
-                  )}
-                <p className="pt-2 border-t border-gray-200/50">
-                  <strong className="font-semibold text-gray-700">
-                    Ownership Summary:
-                  </strong>{" "}
-                  <span className="text-gray-500">
-                    {company.ownership_structure}
-                  </span>
-                </p>
-              </div>
+                    <i className="ph-fill ph-x-circle"></i>
+                  </button>
+                </div>
+              ))}
+              <button
+                onClick={() => setActiveFilters([])}
+                className="text-sm text-blue-600 hover:underline"
+              >
+                Reset Filters
+              </button>
             </div>
-          ))}
+          )}
+        </div>
+        <div className="space-y-4">
+          {filteredCompanies.length > 0 ? (
+            filteredCompanies.map((company) => (
+              <div
+                key={company.company_name}
+                className="p-4 border rounded-lg bg-gray-50/50"
+              >
+                <h4 className="text-lg font-bold text-blue-600">
+                  {company.company_name}
+                </h4>
+                <div className="mt-2 text-sm space-y-2">
+                  <p>
+                    <strong className="font-semibold text-gray-700">
+                      Category:
+                    </strong>{" "}
+                    <span
+                      className={
+                        company.is_pe_owned ? "text-green-600 font-bold" : ""
+                      }
+                    >
+                      {company.ownership_category || "N/A"}
+                    </span>
+                  </p>
+                  <p>
+                    <strong className="font-semibold text-gray-700">
+                      Status:
+                    </strong>{" "}
+                    {company.public_private}
+                  </p>
+                  <p>
+                    <strong className="font-semibold text-gray-700">
+                      Nation:
+                    </strong>{" "}
+                    {company.nation}
+                  </p>
+                  {company.pe_owner_names &&
+                    company.pe_owner_names.length > 0 && (
+                      <p>
+                        <strong className="font-semibold text-gray-700">
+                          PE Owners:
+                        </strong>{" "}
+                        {company.pe_owner_names.join(", ")}
+                      </p>
+                    )}
+                  <p className="pt-2 border-t border-gray-200/50">
+                    <strong className="font-semibold text-gray-700">
+                      Ownership Summary:
+                    </strong>{" "}
+                    <span className="text-gray-500">
+                      {company.ownership_structure}
+                    </span>
+                  </p>
+                </div>
+              </div>
+            ))
+          ) : (
+            <p className="text-center text-gray-500 py-4">
+              No companies match the current filters.
+            </p>
+          )}
         </div>
       </Card>
     </section>
