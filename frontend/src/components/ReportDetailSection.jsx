@@ -12,23 +12,35 @@ import {
   ResponsiveContainer,
 } from "recharts";
 import { format, parseISO } from "date-fns";
+import {
+  Box,
+  Typography,
+  Card,
+  CardContent,
+  Grid,
+  CircularProgress,
+  TextField,
+  Chip,
+  Button,
+} from "@mui/material";
 
-// --- Reusable Component ---
-const Card = ({ children, className = "" }) => (
-  <div
-    className={`bg-white text-gray-800 p-6 rounded-lg border border-gray-200 shadow-sm ${className}`}
-  >
-    {children}
-  </div>
-);
+// --- Reusable Card Component --- (Using MUI Card now for consistency)
 
-// Custom Tooltip for Recharts
+// --- Corrected Custom Tooltip for Recharts ---
 const CustomTooltip = ({ active, payload }) => {
   if (active && payload && payload.length) {
+    const data = payload[0];
+    // For Pie charts, the name is `data.name`. For Bar charts, it's inside `data.payload.name`.
+    const name = data.payload.name || data.name;
+    const value = data.value;
+
     return (
-      <div className="p-2 bg-white/80 backdrop-blur-sm border border-gray-200 rounded-lg shadow-lg">
-        <p className="label font-bold text-gray-700">{`${payload[0].name} : ${payload[0].value}`}</p>
-      </div>
+      <Card sx={{ bgcolor: "rgba(255, 255, 255, 0.9)", p: 1 }}>
+        <Typography
+          variant="body2"
+          sx={{ fontWeight: "bold" }}
+        >{`${name}: ${value}`}</Typography>
+      </Card>
     );
   }
   return null;
@@ -146,223 +158,234 @@ function ReportDetailSection({ reportId, showAlert, navigateTo }) {
 
   if (isLoading)
     return (
-      <div className="text-center py-8">
-        <i className="ph-fill ph-spinner-gap animate-spin text-4xl text-blue-600"></i>
-      </div>
+      <Box sx={{ textAlign: "center", py: 4 }}>
+        <CircularProgress />
+      </Box>
     );
-  if (!reportData) return <p className="text-red-600">Report not found.</p>;
+  if (!reportData)
+    return <Typography color="error">Report not found.</Typography>;
 
   return (
-    <section className="space-y-8 animate-fade-in">
+    <Box
+      sx={{ width: "100%", display: "flex", flexDirection: "column", gap: 3 }}
+    >
       {/* Header */}
-      <div>
-        <button
-          className="text-blue-600 font-semibold flex items-center mb-4"
+      <Box>
+        <Button
           onClick={() => navigateTo("history")}
+          startIcon={<i className="ph ph-arrow-left"></i>}
+          sx={{ mb: 2 }}
         >
-          <i className="ph-fill ph-arrow-left mr-2"></i> Back to History
-        </button>
-        <h2 className="text-3xl font-bold text-gray-800">
+          Back to History
+        </Button>
+        <Typography variant="h4" gutterBottom sx={{ fontWeight: "bold" }}>
           {reportData.report_name}
-        </h2>
-        <p className="text-gray-500">
+        </Typography>
+        <Typography variant="body2" color="text.secondary">
           Analysis completed on{" "}
           {reportData.analysis_end_time
             ? format(parseISO(reportData.analysis_end_time), "MMM dd, yyyy")
             : "N/A"}
-        </p>
-      </div>
+        </Typography>
+      </Box>
 
-      {/* Executive Summary Section (Unchanged, as requested) */}
+      {/* Executive Summary */}
       <Card>
-        <h3 className="text-xl font-semibold mb-4 text-gray-800">
-          Executive Summary
-        </h3>
-        <div className="flex flex-col md:flex-row md:items-center gap-8">
-          <div className="text-center">
-            <p className="text-sm text-gray-500">
-              Companies with Private Equities Involvement:{" "}
-              <strong className="font-semibold text-blue-600">
-                {summary.peRelatedCount}
-              </strong>
-            </p>
-          </div>
-          <div className="border-l border-gray-200 pl-8">
-            <p className="text-gray-700 mb-2">
-              This report analyzed{" "}
-              <strong className="font-semibold">{summary.total}</strong>{" "}
-              companies and found that{" "}
-              <strong className="font-semibold">
-                {((summary.peRelatedCount / summary.total) * 100).toFixed(0)}%
-              </strong>{" "}
-              have direct private equity ownership or backing.
-            </p>
-            <p className="text-sm text-gray-500">
-              The full analysis was completed in{" "}
-              <strong className="font-semibold">
-                {formatDuration(reportData.analysis_duration_seconds)}
-              </strong>
-              .
-            </p>
-          </div>
-        </div>
+        <CardContent>
+          <Typography variant="h6" gutterBottom>
+            Executive Summary
+          </Typography>
+          <Typography variant="body1">
+            This report analyzed <strong>{summary.total}</strong> companies and
+            found that{" "}
+            <strong>
+              {summary.peRelatedCount} (
+              {((summary.peRelatedCount / summary.total) * 100).toFixed(0)}%)
+            </strong>{" "}
+            have direct private equity ownership or backing.
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+            The full analysis was completed in{" "}
+            <strong>
+              {formatDuration(reportData.analysis_duration_seconds)}
+            </strong>
+            .
+          </Typography>
+        </CardContent>
       </Card>
 
-      {/* ** FIX **: Updated grid layout for charts */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6">
-        <Card className="lg:col-span-2">
-          <h3 className="font-semibold mb-4 text-gray-800">
-            Ownership Category
-          </h3>
-          <ResponsiveContainer width="100%" height={300}>
-            <PieChart>
-              <Pie
-                data={summary.categoryData}
-                dataKey="value"
-                nameKey="name"
-                cx="50%"
-                cy="50%"
-                innerRadius={60}
-                outerRadius={100}
-                paddingAngle={5}
-                onClick={(data) => addFilter("ownership_category", data.name)}
-              >
-                {summary.categoryData.map((entry, index) => (
-                  <Cell
-                    key={`cell-${index}`}
-                    fill={COLORS[index % COLORS.length]}
-                    className="cursor-pointer"
+      {/* Charts Section */}
+      <Box
+        sx={{
+          display: "flex",
+          gap: 3,
+          flexDirection: { xs: "column", md: "row" },
+        }}
+      >
+        <Box sx={{ flex: { md: 5, lg: 4 } }}>
+          {" "}
+          {/* Corresponds to md={5} lg={4} */}
+          <Card>
+            <CardContent>
+              <Typography variant="h6" gutterBottom>
+                Ownership Category
+              </Typography>
+              <ResponsiveContainer width="100%" height={500}>
+                <PieChart>
+                  <Pie
+                    data={summary.categoryData}
+                    dataKey="value"
+                    nameKey="name"
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={60}
+                    outerRadius={100}
+                    paddingAngle={5}
+                    onClick={(data) =>
+                      addFilter("ownership_category", data.payload.name)
+                    }
+                  >
+                    {summary.categoryData.map((entry, index) => (
+                      <Cell
+                        key={`cell-${index}`}
+                        fill={COLORS[index % COLORS.length]}
+                        style={{ cursor: "pointer" }}
+                      />
+                    ))}
+                  </Pie>
+                  <Tooltip content={<CustomTooltip />} />
+                  <Legend />
+                </PieChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
+        </Box>
+        <Box sx={{ flex: { md: 7, lg: 8 } }}>
+          {" "}
+          {/* Corresponds to md={7} lg={8} */}
+          <Card>
+            <CardContent>
+              <Typography variant="h6" gutterBottom>
+                Top 10 Nations
+              </Typography>
+              <ResponsiveContainer width="100%" height={500}>
+                <BarChart
+                  data={summary.nationData}
+                  margin={{ top: 5, right: 20, left: 0, bottom: 5 }}
+                >
+                  <XAxis dataKey="name" tick={{ fontSize: 12 }} />
+                  <YAxis />
+                  <Tooltip
+                    content={<CustomTooltip />}
+                    cursor={{ fill: "rgba(238, 242, 255, 0.7)" }}
                   />
-                ))}
-              </Pie>
-              <Tooltip content={<CustomTooltip />} />
-              <Legend />
-            </PieChart>
-          </ResponsiveContainer>
-        </Card>
-        <Card className="lg:col-span-3">
-          <h3 className="font-semibold mb-4 text-gray-800">Top 10 Nations</h3>
-          <ResponsiveContainer width="100%" height={300}>
-            <BarChart
-              data={summary.nationData}
-              margin={{ top: 5, right: 20, left: 20, bottom: 5 }}
-            >
-              <XAxis dataKey="name" />
-              <YAxis />
-              <Tooltip
-                content={<CustomTooltip />}
-                cursor={{ fill: "rgba(238, 242, 255, 0.5)" }}
-              />
-              <Bar
-                dataKey="count"
-                fill="#16a34a"
-                radius={[4, 4, 0, 0]}
-                onClick={(data) => addFilter("nation", data.name)}
-                className="cursor-pointer"
-              />
-            </BarChart>
-          </ResponsiveContainer>
-        </Card>
-      </div>
+                  <Bar
+                    dataKey="count"
+                    fill="#16a34a"
+                    radius={[4, 4, 0, 0]}
+                    onClick={(data) => addFilter("nation", data.name)}
+                    style={{ cursor: "pointer" }}
+                  />
+                </BarChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
+        </Box>
+      </Box>
 
       {/* Detailed Company List */}
       <Card>
-        <div className="flex flex-col md:flex-row gap-4 mb-4">
-          <input
-            type="text"
-            placeholder="Search companies in this report..."
-            className="w-full px-4 py-2 border rounded-lg bg-gray-50"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-          />
-          {activeFilters.length > 0 && (
-            <div className="flex items-center gap-2 flex-wrap">
-              {activeFilters.map((filter) => (
-                <div
-                  key={`${filter.type}-${filter.value}`}
-                  className="flex items-center gap-1 bg-gray-200 px-2 py-1 rounded"
-                >
-                  <span className="text-sm">{filter.value}</span>
-                  <button
-                    onClick={() => removeFilter(filter)}
-                    className="text-gray-500 hover:text-red-500"
-                  >
-                    <i className="ph-fill ph-x-circle"></i>
-                  </button>
-                </div>
-              ))}
-              <button
-                onClick={() => setActiveFilters([])}
-                className="text-sm text-blue-600 hover:underline"
-              >
+        <CardContent>
+          {/* Search and Filters */}
+          <Box sx={{ display: "flex", gap: 2, mb: 2, flexWrap: "wrap" }}>
+            <TextField
+              label="Search companies..."
+              variant="outlined"
+              size="small"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              sx={{ flexGrow: 1 }}
+            />
+            {activeFilters.length > 0 && (
+              <Button onClick={() => setActiveFilters([])} size="small">
                 Reset Filters
-              </button>
-            </div>
+              </Button>
+            )}
+          </Box>
+          {activeFilters.length > 0 && (
+            <Box sx={{ display: "flex", gap: 1, mb: 2, flexWrap: "wrap" }}>
+              {activeFilters.map((filter) => (
+                <Chip
+                  key={`${filter.type}-${filter.value}`}
+                  label={filter.value}
+                  onDelete={() => removeFilter(filter)}
+                  size="small"
+                />
+              ))}
+            </Box>
           )}
-        </div>
-        <div className="space-y-4">
-          {filteredCompanies.length > 0 ? (
-            filteredCompanies.map((company) => (
-              <div
-                key={company.company_name}
-                className="p-4 border rounded-lg bg-gray-50/50"
+
+          {/* Company List */}
+          <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
+            {filteredCompanies.length > 0 ? (
+              filteredCompanies.map((company) => (
+                <Box
+                  key={company.company_name}
+                  sx={{
+                    p: 2,
+                    border: "1px solid #e0e0e0",
+                    borderRadius: 2,
+                    bgcolor: "#f9f9f9",
+                  }}
+                >
+                  <Typography variant="h6" color="primary">
+                    {company.company_name}
+                  </Typography>
+                  <Grid container spacing={2} sx={{ mt: 1 }}>
+                    <Grid item xs={12} sm={4}>
+                      <Typography variant="body2">
+                        <strong>Category:</strong>{" "}
+                        {company.ownership_category || "N/A"}
+                      </Typography>
+                    </Grid>
+                    <Grid item xs={12} sm={4}>
+                      <Typography variant="body2">
+                        <strong>Status:</strong> {company.public_private}
+                      </Typography>
+                    </Grid>
+                    <Grid item xs={12} sm={4}>
+                      <Typography variant="body2">
+                        <strong>Nation:</strong> {company.nation}
+                      </Typography>
+                    </Grid>
+                    {company.pe_owner_names &&
+                      company.pe_owner_names.length > 0 && (
+                        <Grid item xs={12}>
+                          <Typography variant="body2">
+                            <strong>PE Owners:</strong>{" "}
+                            {company.pe_owner_names.join(", ")}
+                          </Typography>
+                        </Grid>
+                      )}
+                    <Grid item xs={12}>
+                      <Typography variant="body2" color="text.secondary">
+                        <strong>Summary:</strong> {company.ownership_structure}
+                      </Typography>
+                    </Grid>
+                  </Grid>
+                </Box>
+              ))
+            ) : (
+              <Typography
+                sx={{ textAlign: "center", color: "text.secondary", py: 4 }}
               >
-                <h4 className="text-lg font-bold text-blue-600">
-                  {company.company_name}
-                </h4>
-                <div className="mt-2 text-sm space-y-2">
-                  <p>
-                    <strong className="font-semibold text-gray-700">
-                      Category:
-                    </strong>{" "}
-                    <span
-                      className={
-                        company.is_pe_owned ? "text-green-600 font-bold" : ""
-                      }
-                    >
-                      {company.ownership_category || "N/A"}
-                    </span>
-                  </p>
-                  <p>
-                    <strong className="font-semibold text-gray-700">
-                      Status:
-                    </strong>{" "}
-                    {company.public_private}
-                  </p>
-                  <p>
-                    <strong className="font-semibold text-gray-700">
-                      Nation:
-                    </strong>{" "}
-                    {company.nation}
-                  </p>
-                  {company.pe_owner_names &&
-                    company.pe_owner_names.length > 0 && (
-                      <p>
-                        <strong className="font-semibold text-gray-700">
-                          PE Owners:
-                        </strong>{" "}
-                        {company.pe_owner_names.join(", ")}
-                      </p>
-                    )}
-                  <p className="pt-2 border-t border-gray-200/50">
-                    <strong className="font-semibold text-gray-700">
-                      Ownership Summary:
-                    </strong>{" "}
-                    <span className="text-gray-500">
-                      {company.ownership_structure}
-                    </span>
-                  </p>
-                </div>
-              </div>
-            ))
-          ) : (
-            <p className="text-center text-gray-500 py-4">
-              No companies match the current filters.
-            </p>
-          )}
-        </div>
+                No companies match the current filters.
+              </Typography>
+            )}
+          </Box>
+        </CardContent>
       </Card>
-    </section>
+    </Box>
   );
 }
 
