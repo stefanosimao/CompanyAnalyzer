@@ -38,7 +38,7 @@ These instructions will get you a copy of the project up and running on your loc
 
 **1. Clone the repository:**
 
-````bash
+```bash
 git clone [https://github.com/stefanosimao/companyanalyzer.git](https://github.com/stefanosimao/companyanalyzer.git)
 cd companyanalyzer
 ```
