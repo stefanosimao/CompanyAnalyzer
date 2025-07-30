@@ -1,7 +1,108 @@
 import os
 
+# --- Gemini Prompt Templates ---
+
+ANALYZE_COMPANY_PROMPT = """
+  Analyze the corporate ownership of the company: '{company_name}'.
+
+  Your task is to return a JSON object with the following exact structure and nothing else:
+  {{
+      "chain_of_thought": "Your reasoning process. First, determine if the company is public or private. Second, identify its major owners. Third, based on the owners, select the most accurate ownership_category. Finally, list any PE firms and the headquarters nation.",
+      "public_private": "Public or Private",
+      "ownership_category": "One of: PE-Owned, Public (PE-Backed), Public (Institutional), Private (Founder/Family), Private (Other), Unknown",
+      "pe_owner_names": ["List of PE firm names, or an empty list"],
+      "nation": "Headquarters country name",
+      "ownership_summary": "A brief, one-sentence summary of the ownership structure."
+  }}
+  "**IMPORTANT RULE**: If you cannot find specific information from a reliable source, you MUST state 'Information not found'. Do not infer or guess answers.\n\n"
+  ---
+  EXAMPLE:
+  Company: 'Garrett Motion Inc.'
+
+  JSON Output:
+  {{
+      "chain_of_thought": "First, I determined that Garrett Motion Inc. is traded on the Nasdaq (GTX), making it a 'Public' company. Second, I identified its largest shareholders, which include institutional investors like Oaktree Capital Management and Centerbridge Partners, which are PE-like firms. Therefore, the best category is 'Public (PE-Backed)'. I will list these firms as the PE owners and find its headquarters nation.",
+      "public_private": "Public",
+      "ownership_category": "Public (PE-Backed)",
+      "pe_owner_names": ["Oaktree Capital Management", "Centerbridge Partners"],
+      "nation": "Switzerland",
+      "ownership_summary": "A public company whose largest shareholders are major institutional and PE-like investment firms."
+  }}
+  ---
+
+  Now, perform the analysis for the company: '{company_name}'.
+  """
+
+RESEARCH_PE_PORTFOLIO_PROMPT ="""
+  Provide a detailed profile and a list of portfolio companies for the Private Equity firm: '{pe_name}'.
+
+  Your task is to return a JSON object with the following exact structure and nothing else:
+  {{
+    "profile_summary": "A concise, one-paragraph summary of the PE firm.",
+    "portfolio_companies": [
+      {{
+        "name": "Company Name",
+        "headquarters": "Headquarters Country",
+        "industry": "Primary Industry"
+      }}
+    ]
+  }}
+
+  ---
+  EXAMPLE:
+  PE Firm: 'Bain Capital'
+
+  JSON Output:
+  {{
+    "profile_summary": "Bain Capital is a global private investment firm based in Boston, Massachusetts. It specializes in private equity, venture capital, credit, public equity, impact investing, life sciences, and real estate. The firm has invested in or acquired hundreds of companies.",
+    "portfolio_companies": [
+      {{ "name": "StarkWare", "headquarters": "Israel", "industry": "Technology" }},
+      {{ "name": "Coyol Free Zone", "headquarters": "Costa Rica", "industry": "Industrial" }},
+      {{ "name": "EcoCeres, Inc.", "headquarters": "USA", "industry": "Bio-refinery" }}
+    ]
+  }}
+  ---
+
+  Now, perform the research for the PE firm: '{pe_name}'. If no portfolio companies are found, return an empty list.
+  """
+
+COMPANY_RETRY_PROMPT = """
+  The previous response for the company '{company_name}' was not valid JSON.
+  Please correct the following text and return ONLY the valid JSON object.
+
+  Your task is to return a JSON object with the following exact structure and nothing else:
+  {{
+    "chain_of_thought": "Your reasoning process...",
+    "public_private": "Public or Private",
+    "ownership_category": "One of: PE-Owned, Public (PE-Backed), Public (Institutional), Private (Founder/Family), Private (Other), Unknown",
+    "pe_owner_names": ["List of PE firm names, or an empty list"],
+    "nation": "Headquarters country name",
+    "ownership_summary": "A brief, one-sentence summary of the ownership structure."
+  }}
+
+  ---
+  EXAMPLE JSON Output:
+  {{
+    "chain_of_thought": "First, I determined that Garrett Motion Inc. is traded on the Nasdaq (GTX)...",
+    "public_private": "Public",
+    "ownership_category": "Public (PE-Backed)",
+    "pe_owner_names": ["Oaktree Capital Management", "Centerbridge Partners"],
+    "nation": "Switzerland",
+    "ownership_summary": "A public company whose largest shareholders are major institutional and PE-like investment firms."
+  }}
+  ---
+  
+  PREVIOUS INVALID RESPONSE TO CORRECT:
+  {response_text}
+  ---
+
+  CORRECTED JSON ONLY:
+  """
+
+
 # Define BASE_DIR to point to the main CompanyAnalyzer/ project directory.
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+INSTANCE_FOLDER = os.path.join(BASE_DIR, 'instance')
 
 # --- Folder Paths ---
 # These paths are now relative to the BASE_DIR
@@ -112,6 +213,7 @@ def get_default_pe_firms():
     ]
 
 def get_default_public_asset_managers():
+
     """Returns a default list of public asset managers for the blocklist."""
     return {
         "managers": [
