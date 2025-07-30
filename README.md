@@ -1,8 +1,8 @@
-# Company Ownership Analyzer (PE Hunter)
+# Company Ownership Analyzer
 
-## 📖 Overview
+## Overview
 
-The **Company Ownership Analyzer**, also known as **PE Hunter**, is a powerful tool designed to automate the research of company ownership structures. This application takes a list of company names from an Excel file, analyzes each one to determine its ownership category (e.g., Private Equity-owned, Public, Family-owned), and identifies its key PE owners.
+The **Company Ownership Analyzer**, is a powerful tool designed to automate the research of company ownership structures. This application takes a list of company names from an Excel file, analyzes each one to determine its ownership category (e.g., Private Equity-owned, Public, Family-owned), and identifies its key PE owners.
 
 The tool is built with a **Flask** backend that uses the **Google Gemini API** for its AI-powered analysis and a modern **React** frontend with **Material-UI** for a clean and intuitive user experience.
 
@@ -70,7 +70,6 @@ Navigate to the frontend directory and install the necessary npm packages:
 cd frontend
 npm install
 ```
-
 **4. Configure Environment Variables:**
 Create a .env file in the root of the project directory. This file will securely store your API key.
 ```bash
