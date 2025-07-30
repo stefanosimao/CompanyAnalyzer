@@ -35,38 +35,41 @@ ANALYZE_COMPANY_PROMPT = """
   Now, perform the analysis for the company: '{company_name}'.
   """
 
-RESEARCH_PE_PORTFOLIO_PROMPT ="""
-  Provide a detailed profile and a list of portfolio companies for the Private Equity firm: '{pe_name}'.
+RESEARCH_PE_PORTFOLIO_PROMPT = """
+You are a financial research assistant. Your task is to provide a detailed profile and a list of *current* portfolio companies for the Private Equity firm: '{pe_name}'.
 
-  Your task is to return a JSON object with the following exact structure and nothing else:
-  {{
-    "profile_summary": "A concise, one-paragraph summary of the PE firm.",
-    "portfolio_companies": [
-      {{
-        "name": "Company Name",
-        "headquarters": "Headquarters Country",
-        "industry": "Primary Industry"
-      }}
-    ]
-  }}
+Your task is to return a JSON object with the following exact structure. Do not include companies the firm has exited.
 
-  ---
-  EXAMPLE:
-  PE Firm: 'Bain Capital'
+{{
+  "profile_summary": "A concise, one-paragraph summary of the PE firm, including its investment focus and strategy.",
+  "portfolio_companies": [
+    {{
+      "name": "Company Name",
+      "industry": "Primary Industry",
+    }}
+  ]
+}}
 
-  JSON Output:
-  {{
-    "profile_summary": "Bain Capital is a global private investment firm based in Boston, Massachusetts. It specializes in private equity, venture capital, credit, public equity, impact investing, life sciences, and real estate. The firm has invested in or acquired hundreds of companies.",
-    "portfolio_companies": [
-      {{ "name": "StarkWare", "headquarters": "Israel", "industry": "Technology" }},
-      {{ "name": "Coyol Free Zone", "headquarters": "Costa Rica", "industry": "Industrial" }},
-      {{ "name": "EcoCeres, Inc.", "headquarters": "USA", "industry": "Bio-refinery" }}
-    ]
-  }}
-  ---
+---
+**CRITICAL INSTRUCTIONS:**
+1.  Focus on the firm's **current, active portfolio**. Do not list historical or exited investments.
+---
 
-  Now, perform the research for the PE firm: '{pe_name}'. If no portfolio companies are found, return an empty list.
-  """
+EXAMPLE:
+PE Firm: 'Bain Capital'
+
+JSON Output:
+{{
+  "profile_summary": "Bain Capital is a global private investment firm based in Boston, Massachusetts...",
+  "portfolio_companies": [
+    {{ "name": "StarkWare", "headquarters": "Israel", "industry": "Technology", "investment_year": "2022" }},
+    {{ "name": "Coyol Free Zone", "headquarters": "Costa Rica", "industry": "Industrial", "investment_year": "2021" }}
+  ]
+}}
+---
+
+Now, perform the research for the PE firm: '{pe_name}'.
+"""
 
 COMPANY_RETRY_PROMPT = """
   The previous response for the company '{company_name}' was not valid JSON.

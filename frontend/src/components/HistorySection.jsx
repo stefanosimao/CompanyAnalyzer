@@ -23,23 +23,26 @@ function HistorySection({ showAlert, navigateTo }) {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [reportToDelete, setReportToDelete] = useState(null);
 
-  useEffect(() => {
-    const fetchHistory = async () => {
+  const fetchHistory = async () => {
+    if (history.length === 0) {
       setIsLoading(true);
-      try {
-        const response = await fetch("/history");
-        const data = await response.json();
-        setHistory(response.ok ? data : []);
-        if (!response.ok)
-          showAlert("error", data.error || "Failed to load history.");
-      } catch (error) {
-        showAlert("error", `Network error: ${error.message}`);
-      } finally {
-        setIsLoading(false);
-      }
-    };
+    }
+    try {
+      const response = await fetch("/history");
+      const data = await response.json();
+      setHistory(response.ok ? data : []);
+      if (!response.ok)
+        showAlert("error", data.error || "Failed to load history.");
+    } catch (error) {
+      showAlert("error", `Network error: ${error.message}`);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
     fetchHistory();
-    const interval = setInterval(fetchHistory, 10000); // Poll every 10 seconds
+    const interval = setInterval(fetchHistory, 10000);
     return () => clearInterval(interval);
   }, [showAlert]);
 
@@ -73,7 +76,6 @@ function HistorySection({ showAlert, navigateTo }) {
 
       if (response.ok) {
         showAlert("success", result.message || "Report deleted!");
-        // Optimistically update the UI by removing the deleted report from state
         setHistory((prevHistory) =>
           prevHistory.filter((item) => item.id !== reportToDelete.id)
         );
@@ -96,7 +98,7 @@ function HistorySection({ showAlert, navigateTo }) {
       >
         Analysis History
       </Typography>
-      {isLoading && history.length === 0 ? (
+      {isLoading ? (
         <div style={{ textAlign: "center" }}>
           <CircularProgress />
         </div>
@@ -107,17 +109,7 @@ function HistorySection({ showAlert, navigateTo }) {
       ) : (
         <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
           {history.map((entry) => (
-            <Card
-              key={entry.id}
-              onClick={() =>
-                entry.status === "Completed" &&
-                navigateTo("reportDetail", entry.id)
-              }
-              sx={{
-                cursor: entry.status === "Completed" ? "pointer" : "default",
-                "&:hover": { boxShadow: entry.status === "Completed" ? 6 : 1 },
-              }}
-            >
+            <Card key={entry.id}>
               <CardContent>
                 <Box
                   sx={{
@@ -129,26 +121,42 @@ function HistorySection({ showAlert, navigateTo }) {
                   <Typography
                     variant="h6"
                     component="h3"
-                    sx={{ fontWeight: "600" }}
+                    sx={{
+                      fontWeight: "600",
+                      cursor:
+                        entry.status === "Completed" ? "pointer" : "default",
+                      "&:hover": {
+                        textDecoration:
+                          entry.status === "Completed" ? "underline" : "none",
+                      },
+                    }}
+                    onClick={() =>
+                      entry.status === "Completed" &&
+                      navigateTo("reportDetail", entry.id)
+                    }
                   >
                     {entry.name}
                   </Typography>
-                  <Chip
-                    label={entry.status}
-                    color={entry.status === "Completed" ? "success" : "warning"}
-                    size="small"
-                    sx={{ fontWeight: "bold" }}
-                  />
-                  <IconButton
-                    aria-label="delete report"
-                    color="error"
-                    onClick={(e) => {
-                      e.stopPropagation(); // Prevent card click event
-                      openDeleteDialog(entry);
-                    }}
-                  >
-                    <DeleteIcon />
-                  </IconButton>
+                  <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                    <Chip
+                      label={entry.status}
+                      color={
+                        entry.status === "Completed" ? "success" : "warning"
+                      }
+                      size="small"
+                      sx={{ fontWeight: "bold" }}
+                    />
+                    <IconButton
+                      aria-label="delete report"
+                      color="error"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        openDeleteDialog(entry);
+                      }}
+                    >
+                      <DeleteIcon />
+                    </IconButton>
+                  </Box>
                 </Box>
                 <Box
                   sx={{
@@ -178,6 +186,25 @@ function HistorySection({ showAlert, navigateTo }) {
           ))}
         </Box>
       )}
+
+      <Dialog open={dialogOpen} onClose={handleCloseDialog}>
+        <DialogTitle>{"Confirm Action"}</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            {reportToDelete?.status === "Pending"
+              ? `This will interrupt the ongoing analysis and delete the report "${reportToDelete?.name}". This action cannot be undone.`
+              : `Are you sure you want to permanently delete the report "${reportToDelete?.name}"? This action cannot be undone.`}
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleCloseDialog}>Cancel</Button>
+          <Button onClick={handleConfirmDelete} color="error" autoFocus>
+            {reportToDelete?.status === "Pending"
+              ? "Interrupt and Delete"
+              : "Delete"}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 }
