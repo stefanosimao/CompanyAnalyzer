@@ -7,14 +7,12 @@ from pathlib import Path
 from threading import Thread
 from typing import Any, Dict, List, Union
 import pandas as pd
-from google import genai
-from google.genai.types import GenerateContentConfig, GoogleSearch, Tool
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
 from . import utils, config, gemini_client
 import os
+from openpyxl.styles import PatternFill, Font, Alignment
 
-from . import utils, config
 
 # Configure module-level logger
 logger = logging.getLogger(__name__)
@@ -29,7 +27,8 @@ def _background_worker(
     report_id: str,
     report_name: str,
     gemini_api_key: str,
-    pe_firms_list: List[str]
+    pe_firms_list: List[str],
+    original_filepath: str 
 ) -> None:
     start = datetime.now()
     logger.info('Background worker started for report ID: %s', report_id)
@@ -98,6 +97,7 @@ def _background_worker(
             entry.update({
                 'status': 'Completed',
                 'file_path': str(path),
+                'original_filepath': original_filepath,
                 'completed_at': datetime.now().isoformat(),
                 'analysis_duration_seconds': duration_seconds
             })
@@ -106,16 +106,11 @@ def _background_worker(
     utils.save_history(history)
     logger.info('Background worker completed for report ID: %s', report_id)
 
-def start_company_analysis(companies_df: pd.DataFrame) -> Dict[str, str]:
+def start_company_analysis(companies_df: pd.DataFrame, original_filepath: str) -> Dict[str, str]:
     gemini_api_key = os.environ.get('GEMINI_API_KEY')
     if not gemini_api_key:
         logger.error('GEMINI_API_KEY is not configured. Please set it in your .env file.')
         return {'error': 'GEMINI_API_KEY is not configured. Please set it in your .env file.'}
-
-    
-    if not gemini_api_key:
-        logger.error('Gemini API Key is not configured. Please set it in settings.')
-        return {'error': 'Gemini API Key is not configured. Please set it in settings.'}
 
     report_id = str(uuid.uuid4())
     report_name = f"Analysis Report - {datetime.now():%Y-%m-%d %H:%M:%S}"
@@ -128,6 +123,7 @@ def start_company_analysis(companies_df: pd.DataFrame) -> Dict[str, str]:
         'status': 'Pending',
         'num_companies': len(companies_df),
         'file_path': None,
+        'original_filepath': None,
         'completed_at': None,
         'analysis_duration_seconds': None
     })
@@ -135,7 +131,7 @@ def start_company_analysis(companies_df: pd.DataFrame) -> Dict[str, str]:
 
     Thread(
         target=_background_worker,
-        args=(companies_df, report_id, report_name, gemini_api_key, utils.load_pe_firms()),
+        args=(companies_df, report_id, report_name, gemini_api_key, utils.load_pe_firms(), original_filepath),
         daemon=True
     ).start()
 
@@ -224,3 +220,152 @@ def _normalize_company_name(name: str) -> str:
     words = [word for word in words if word not in suffixes]
     
     return ' '.join(words).strip()
+
+def create_downloadable_report(report_id: str) -> Union[str, None]:
+    history = utils.load_history()
+    report_entry = next((item for item in history if item["id"] == report_id), None)
+
+    if not report_entry or not report_entry.get('original_filepath'):
+        logger.error(f"Could not find original file path for report ID: {report_id}")
+        return None
+
+    original_filepath = report_entry['original_filepath']
+    report_json_path = report_entry['file_path']
+
+    try:
+        original_df = pd.read_excel(original_filepath)
+        report_data = utils.load_json_file(report_json_path)
+        analysis_results = report_data.get('data', [])
+        results_df = pd.DataFrame(analysis_results)
+
+        merged_df = pd.merge(original_df, results_df, left_on='Company Name', right_on='company_name', how='left')
+        
+        final_df = merged_df[['Company Name']].copy()
+        
+        # --- START OF NEW LOGIC FOR REVIEW FLAGS ---
+        
+        # Add the 'Needs Review' and 'Review Reason' columns
+        final_df['Needs Review'] = merged_df['needs_review'].apply(lambda x: 'Yes' if x else 'No')
+        final_df['Review Reason'] = merged_df['review_reason']
+        
+        # --- END OF NEW LOGIC ---
+
+        final_df['Summary'] = merged_df['ownership_structure']
+        final_df['Category'] = merged_df['ownership_category']
+        final_df['Status'] = merged_df['public_private']
+        final_df['Nation'] = merged_df['nation']
+        
+        pe_owners = merged_df['pe_owner_names'].dropna()
+        owner_cols = []
+        if not pe_owners.empty:
+            max_owners = pe_owners.apply(len).max()
+            if max_owners > 0:
+                owner_cols = [f'PE Owner {i+1}' for i in range(max_owners)]
+                owners_df = pd.DataFrame(pe_owners.tolist(), index=pe_owners.index).reindex(columns=range(max_owners))
+                owners_df.columns = owner_cols
+                final_df = final_df.join(owners_df)
+
+        # Sort rows
+        final_df.sort_values(by=['Category', 'Company Name'], inplace=True)
+
+        download_filename = f"{report_id}_analysis_results.xlsx"
+        download_filepath = os.path.join(config.REPORTS_FOLDER, download_filename)
+
+        with pd.ExcelWriter(download_filepath, engine='openpyxl') as writer:
+            final_df.to_excel(writer, index=False, sheet_name='Analysis Results')
+            
+            worksheet = writer.sheets['Analysis Results']
+            
+            # --- START OF NEW STYLING LOGIC ---
+
+            header_font = Font(bold=True, color="FFFFFF")
+            header_fill = PatternFill(start_color="4F81BD", end_color="4F81BD", fill_type="solid")
+            alternating_row_fill = PatternFill(start_color="F2F2F2", end_color="F2F2F2", fill_type="solid")
+            
+            # Define the yellow fill for flagged rows
+            review_fill = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid")
+
+            # Apply header style
+            for cell in worksheet[1]:
+                cell.font = header_font
+                cell.fill = header_fill
+                cell.alignment = Alignment(horizontal="center")
+
+            # Apply alternating row color (this will be overridden by the review color if needed)
+            for row_index in range(2, worksheet.max_row + 1):
+                if row_index % 2 == 0:
+                    for cell in worksheet[row_index]:
+                        cell.fill = alternating_row_fill
+            
+            # Add conditional formatting for rows that need review
+            # Find the column letter for 'Needs Review'
+            needs_review_col_letter = None
+            for idx, col_name in enumerate(final_df.columns):
+                if col_name == 'Needs Review':
+                    needs_review_col_letter = chr(65 + idx)
+                    break
+            
+            if needs_review_col_letter:
+                # Formula checks if the 'Needs Review' cell in the current row equals "Yes"
+                formula = f'${needs_review_col_letter}2="Yes"'
+                # Apply the rule to the entire data range of the sheet
+                worksheet.conditional_formatting.add(f'A2:Z{worksheet.max_row}',
+                                                     FormulaRule(formula=[formula], fill=review_fill))
+
+            # --- END OF NEW STYLING LOGIC ---
+
+            # Adjust column widths
+            for idx, col in enumerate(final_df):
+                series = final_df[col]
+                max_len = max(
+                    (series.astype(str).map(len).max(), len(str(series.name)))
+                ) + 2
+                worksheet.column_dimensions[chr(65 + idx)].width = max_len
+        
+        logger.info(f"Created styled downloadable report with review flags at: {download_filepath}")
+        return download_filepath
+
+    except Exception as e:
+        logger.error(f"Error creating downloadable report for ID {report_id}: {e}", exc_info=True)
+        return None
+    
+def delete_report(report_id: str) -> bool:
+    history = utils.load_history()
+    report_to_delete = None
+    # Create a new list excluding the report to be deleted
+    updated_history = [report for report in history if report['id'] != report_id]
+
+    # Find the report entry to get file paths
+    for report in history:
+        if report['id'] == report_id:
+            report_to_delete = report
+            break
+    
+    if not report_to_delete:
+        logger.warning(f"Attempted to delete non-existent report with ID: {report_id}")
+        return False
+
+    # If we found the report, proceed with deleting files
+    try:
+        # 1. Delete the main JSON report file
+        if report_to_delete.get('file_path') and os.path.exists(report_to_delete['file_path']):
+            os.remove(report_to_delete['file_path'])
+            logger.info(f"Deleted JSON report: {report_to_delete['file_path']}")
+
+        # 2. Delete the downloadable Excel report if it exists
+        download_filename = f"{report_id}_analysis_results.xlsx"
+        download_filepath = os.path.join(config.REPORTS_FOLDER, download_filename)
+        if os.path.exists(download_filepath):
+            os.remove(download_filepath)
+            logger.info(f"Deleted downloadable report: {download_filepath}")
+
+        # 3. Save the updated history file (with the entry removed)
+        utils.save_history(updated_history)
+        logger.info(f"Successfully deleted report entry with ID: {report_id}")
+        return True
+
+    except OSError as e:
+        logger.error(f"Error deleting files for report {report_id}: {e}", exc_info=True)
+        # Even if a file deletion fails, we still update the history to remove the broken entry
+        utils.save_history(updated_history)
+        return False

@@ -21,8 +21,11 @@ import {
   CircularProgress,
   TextField,
   Chip,
+  Tooltip as MuiTooltip,
   Button,
+  IconButton,
 } from "@mui/material";
+import WarningAmberIcon from "@mui/icons-material/WarningAmber";
 
 // --- Reusable Card Component --- (Using MUI Card now for consistency)
 
@@ -171,13 +174,32 @@ function ReportDetailSection({ reportId, showAlert, navigateTo }) {
     >
       {/* Header */}
       <Box>
-        <Button
-          onClick={() => navigateTo("history")}
-          startIcon={<i className="ph ph-arrow-left"></i>}
-          sx={{ mb: 2 }}
+        <Box
+          sx={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            mb: 2,
+          }}
         >
-          Back to History
-        </Button>
+          <Button
+            onClick={() => navigateTo("history")}
+            startIcon={<i className="ph ph-arrow-left"></i>}
+          >
+            Back to History
+          </Button>
+
+          <Button
+            variant="contained"
+            color="success"
+            href={`/download/${reportId}`}
+            target="_blank"
+            startIcon={<i className="ph ph-file-xls"></i>}
+          >
+            Download Excel Report
+          </Button>
+        </Box>
+
         <Typography variant="h4" gutterBottom sx={{ fontWeight: "bold" }}>
           {reportData.report_name}
         </Typography>
@@ -224,7 +246,6 @@ function ReportDetailSection({ reportId, showAlert, navigateTo }) {
       >
         <Box sx={{ flex: { md: 5, lg: 4 } }}>
           {" "}
-          {/* Corresponds to md={5} lg={4} */}
           <Card>
             <CardContent>
               <Typography variant="h6" gutterBottom>
@@ -262,7 +283,6 @@ function ReportDetailSection({ reportId, showAlert, navigateTo }) {
         </Box>
         <Box sx={{ flex: { md: 7, lg: 8 } }}>
           {" "}
-          {/* Corresponds to md={7} lg={8} */}
           <Card>
             <CardContent>
               <Typography variant="h6" gutterBottom>
@@ -338,9 +358,23 @@ function ReportDetailSection({ reportId, showAlert, navigateTo }) {
                     bgcolor: "#f9f9f9",
                   }}
                 >
-                  <Typography variant="h6" color="primary">
-                    {company.company_name}
-                  </Typography>
+                  <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                    <Typography variant="h6" color="primary">
+                      {company.company_name}
+                    </Typography>
+                    {company.needs_review && (
+                      <MuiTooltip
+                        title={
+                          company.review_reason ||
+                          "This entry may have inconsistencies."
+                        }
+                      >
+                        <IconButton size="small">
+                          <WarningAmberIcon color="warning" />
+                        </IconButton>
+                      </MuiTooltip>
+                    )}
+                  </Box>
                   <Grid container spacing={2} sx={{ mt: 1 }}>
                     <Grid item xs={12} sm={4}>
                       <Typography variant="body2">

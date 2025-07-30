@@ -12,7 +12,8 @@ ANALYZE_COMPANY_PROMPT = """
       "ownership_category": "One of: PE-Owned, Public (PE-Backed), Public (Institutional), Private (Founder/Family), Private (Other), Unknown",
       "pe_owner_names": ["List of PE firm names, or an empty list"],
       "nation": "Headquarters country name",
-      "ownership_summary": "A brief, one-sentence summary of the ownership structure."
+      "ownership_summary": "A brief, one-sentence summary of the ownership structure.",
+      "uncertainties": ["A list of specific points of uncertainty, or an empty list if confident."]
   }}
   "**IMPORTANT RULE**: If you cannot find specific information from a reliable source, you MUST state 'Information not found'. Do not infer or guess answers.\n\n"
   ---
@@ -26,7 +27,8 @@ ANALYZE_COMPANY_PROMPT = """
       "ownership_category": "Public (PE-Backed)",
       "pe_owner_names": ["Oaktree Capital Management", "Centerbridge Partners"],
       "nation": "Switzerland",
-      "ownership_summary": "A public company whose largest shareholders are major institutional and PE-like investment firms."
+      "ownership_summary": "A public company whose largest shareholders are major institutional and PE-like investment firms.",
+      "uncertainties": []
   }}
   ---
 
@@ -114,7 +116,7 @@ STATIC_FOLDER = os.path.join(BASE_DIR, 'static')
 # --- File Paths ---
 # These paths are also relative to the BASE_DIR
 SETTINGS_FILE = os.path.join(BASE_DIR, 'settings.json')
-HISTORY_FILE = os.path.join(BASE_DIR, 'history.json')
+HISTORY_FILE = os.path.join(BASE_DIR, 'instance/history.json')
 PE_LIST_FILE = os.path.join(BASE_DIR, 'pe_firms.json')
 NATIONS_FILE = os.path.join(BASE_DIR, 'nations.json') 
 PUBLIC_MANAGERS_FILE = os.path.join(BASE_DIR, 'public_asset_managers.json')

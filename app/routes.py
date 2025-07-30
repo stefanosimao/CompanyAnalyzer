@@ -1,6 +1,6 @@
 import pandas as pd
 import uuid
-from flask import Blueprint, request, jsonify, render_template, current_app
+from flask import Blueprint, request, jsonify, render_template, current_app, send_file
 import logging
 from . import services
 from . import utils
@@ -90,7 +90,7 @@ def upload_file():
                 return jsonify({"error": "No valid company names found in the 'Company Name' column."}), 400
             
             # Call the service layer to start the analysis
-            analysis_status = services.start_company_analysis(companies_df)
+            analysis_status = services.start_company_analysis(companies_df, filepath)
             
             if "error" in analysis_status:
                 return jsonify(analysis_status), 500 # Return error from service
@@ -112,27 +112,6 @@ def get_history():
     """
     history = utils.load_history()
     return jsonify(history), 200
-
-@main_bp.route('/report/<report_id>')
-def get_report(report_id):
-    """
-    Retrieves and returns a specific analysis report by its ID.
-    """
-    report_path = os.path.join(current_app.config['REPORTS_FOLDER'], f'{report_id}.json')
-    
-    if not os.path.exists(report_path):
-        logging.warning(f"Report with ID {report_id} not found at {report_path}")
-        return jsonify({"error": "Report not found"}), 404
-    
-    try:
-        # Load the report data using the generic JSON loader from utils
-        report_data = utils.load_json_file(report_path)
-        if not report_data: # In case the file exists but is empty/corrupt
-            return jsonify({"error": "Report data is empty or corrupt."}), 500
-        return jsonify(report_data), 200
-    except Exception as e:
-        logging.error(f"Error loading report {report_id} from {report_path}: {e}", exc_info=True)
-        return jsonify({"error": f"Failed to load report data: {e}"}), 500
 
 @main_bp.route('/status/<report_id>')
 def get_report_status(report_id):
@@ -161,3 +140,51 @@ def handle_pe_firms():
     else: # GET request
         pe_firms = utils.load_pe_firms()
         return jsonify(pe_firms), 200
+
+@main_bp.route('/download/<report_id>')
+def download_report(report_id):
+    """
+    Generates and serves the Excel report for download.
+    """
+    filepath = services.create_downloadable_report(report_id)
+    
+    if filepath and os.path.exists(filepath):
+        try:
+            return send_file(
+                filepath,
+                as_attachment=True,
+                download_name=f"Analysis_Report_{report_id}.xlsx"
+            )
+        except Exception as e:
+            logging.error(f"Error sending file for report ID {report_id}: {e}", exc_info=True)
+            return jsonify({"error": "Could not send the file."}), 500
+    else:
+        return jsonify({"error": "Report not found or could not be generated."}), 
+
+@main_bp.route('/report/<report_id>', methods=['GET', 'DELETE'])
+def handle_report(report_id):
+    """
+    Handles GETting or DELETEing a specific report.
+    """
+    if request.method == 'DELETE':
+        success = services.delete_report(report_id)
+        if success:
+            return jsonify({"message": "Report deleted successfully"}), 200
+        else:
+            return jsonify({"error": "Report not found or could not be deleted"}), 404
+    
+    # This is the original GET logic
+    report_path = os.path.join(current_app.config['REPORTS_FOLDER'], f'{report_id}.json')
+    
+    if not os.path.exists(report_path):
+        logging.warning(f"Report with ID {report_id} not found at {report_path}")
+        return jsonify({"error": "Report not found"}), 404
+    
+    try:
+        report_data = utils.load_json_file(report_path)
+        if not report_data:
+            return jsonify({"error": "Report data is empty or corrupt."}), 500
+        return jsonify(report_data), 200
+    except Exception as e:
+        logging.error(f"Error loading report {report_id} from {report_path}: {e}", exc_info=True)
+        return jsonify({"error": f"Failed to load report data: {e}"}), 500

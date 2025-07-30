@@ -3,6 +3,7 @@ import json
 from typing import Any, Dict, List, Union
 from google import genai
 from google.genai.types import GenerateContentConfig, GoogleSearch, Tool
+import re
 
 from . import utils, config
 
@@ -43,7 +44,9 @@ def analyze_company(
         'nation': 'Unknown',
         'flagged_as_pe_account': False,
         'source_snippets': [],
-        'error': None
+        'error': None,
+        'needs_review': False,
+        'review_reason': None 
     }
 
     initial_prompt = config.ANALYZE_COMPANY_PROMPT.format(company_name=company_name)
@@ -85,18 +88,37 @@ def analyze_company(
         if ownership_data:
             category = ownership_data.get('ownership_category', 'Unknown')
             pe_owners = ownership_data.get('pe_owner_names', [])
+            uncertainties = ownership_data.get('uncertainties', [])
+            summary_text = ownership_data.get('ownership_summary', 'N/A')
+            cleaned_summary = re.sub(r'\s*\[[\d,\s]+\]\s*$', '', summary_text).strip()
+
 
             data.update({
                 'public_private': ownership_data.get('public_private', 'Unknown'),
                 'ownership_category': category,
                 'pe_owner_names': pe_owners,
                 'nation': ownership_data.get('nation', 'Unknown'),
-                'ownership_structure': ownership_data.get('ownership_summary', 'N/A')
+                'ownership_structure': cleaned_summary
             })
 
             if category in ['PE-Owned', 'Public (PE-Backed)']:
                 data['is_pe_owned'] = True
                 data['flagged_as_pe_account'] = True
+
+            # 1. Check for AI-reported uncertainties
+            if uncertainties:
+                data['needs_review'] = True
+                data['review_reason'] = f"AI was uncertain: {'; '.join(uncertainties)}"
+
+            # 2. Perform backend sanity check (Rule-Based)
+            if pe_owners and category not in ['PE-Owned', 'Public (PE-Backed)']:
+                data['needs_review'] = True
+                reason = "Inconsistency: PE owner(s) were identified, but the category is not PE-related."
+                # Append to existing reason if there is one
+                if data['review_reason']:
+                    data['review_reason'] += f" | {reason}"
+                else:
+                    data['review_reason'] = reason
 
             if pe_owners:
                 for pe_firm in pe_owners:
