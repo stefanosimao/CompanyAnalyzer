@@ -1,4 +1,5 @@
-Company Ownership Analyzer (PE Hunter)
+# Company Ownership Analyzer (PE Hunter)
+
 📖 Overview
 The Company Ownership Analyzer, also known as PE Hunter, is a powerful tool designed to automate the research of company ownership structures. This application takes a list of company names from an Excel file, analyzes each one to determine its ownership category (e.g., Private Equity-owned, Public, Family-owned), and identifies its key PE owners.
 
