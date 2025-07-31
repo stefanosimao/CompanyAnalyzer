@@ -5,6 +5,11 @@ import os
 ANALYZE_COMPANY_PROMPT = """
   Analyze the corporate ownership of the company: '{company_name}'.
 
+  **Suggested workflow:**
+1.  Perform a targeted web search for the company's official website and its Wikipedia page.
+2.  Specifically search for phrases like "up-to-date [Company Name] ownership", "[Company Name] investors", and "[Company Name] acquired by".
+3.  Synthesize the information from these sources to determine the company's structure of the current year.
+
   Your task is to return a JSON object with the following exact structure and nothing else:
   {{
       "chain_of_thought": "Your reasoning process. First, determine if the company is public or private. Second, identify its major owners. Third, based on the owners, select the most accurate ownership_category. Finally, list any PE firms and the headquarters nation.",
